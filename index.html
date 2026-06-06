@@ -40,23 +40,31 @@
             </div>
 
             <form id="saveForm" class="save-form">
-              <label for="urlInput">YouTube 링크</label>
+              <label for="urlInput">YouTube 주소</label>
               <textarea id="urlInput" rows="4" autocomplete="off" spellcheck="false" placeholder="https://youtu.be/..."></textarea>
+
+              <label>
+                제목 (선택)
+                <input id="titleInput" type="text" autocomplete="off" placeholder="안 적어도 저장돼요">
+              </label>
 
               <div class="form-grid">
                 <label>
-                  제목
-                  <input id="titleInput" type="text" autocomplete="off" placeholder="비워두면 자동 시도">
+                  카테고리
+                  <div class="control-row">
+                    <select id="categoryInput"></select>
+                    <button class="icon-button" id="newCategoryButton" type="button" title="카테고리 추가" aria-label="카테고리 추가">+</button>
+                  </div>
                 </label>
 
                 <label>
-                  프로필
-                  <select id="profileInput"></select>
+                  분류 칸
+                  <div class="control-row">
+                    <select id="slotInput"></select>
+                    <button class="icon-button" id="newSlotButton" type="button" title="분류 칸 추가" aria-label="분류 칸 추가">+</button>
+                  </div>
                 </label>
               </div>
-
-              <label for="tagsInput">태그</label>
-              <input id="tagsInput" type="text" autocomplete="off" placeholder="요리, 운동, 공부">
 
               <label for="noteInput">메모</label>
               <textarea id="noteInput" rows="3" placeholder="왜 저장했는지"></textarea>
@@ -71,7 +79,6 @@
           <section class="filter-panel" aria-labelledby="filterTitle">
             <div class="section-heading">
               <h2 id="filterTitle">보기</h2>
-              <button id="newProfileButton" class="icon-button" type="button" title="프로필 추가" aria-label="프로필 추가">+</button>
             </div>
 
             <nav class="filter-list" id="viewFilters" aria-label="상태 필터">
@@ -84,11 +91,11 @@
             </nav>
 
             <label class="select-label">
-              프로필 보기
-              <select id="profileFilter"></select>
+              카테고리 보기
+              <select id="categoryFilter"></select>
             </label>
 
-            <div class="tag-cloud" id="tagCloud" aria-label="태그 필터"></div>
+            <div class="slot-cloud" id="slotCloud" aria-label="분류 칸 필터"></div>
           </section>
         </aside>
 
@@ -96,14 +103,14 @@
           <div class="content-toolbar">
             <label class="search-box" aria-label="검색">
               <span>⌕</span>
-              <input id="searchInput" type="search" autocomplete="off" placeholder="제목, 메모, 태그 검색">
+              <input id="searchInput" type="search" autocomplete="off" placeholder="제목, 메모, 카테고리 검색">
             </label>
 
             <select id="sortInput" class="sort-select" aria-label="정렬">
               <option value="newest">최근 저장순</option>
               <option value="oldest">오래된순</option>
               <option value="title">제목순</option>
-              <option value="profile">프로필순</option>
+              <option value="category">카테고리순</option>
             </select>
           </div>
 
@@ -147,25 +154,31 @@
           <input id="editTitle" type="text" autocomplete="off">
         </label>
 
+        <label>
+          상태
+          <select id="editStatus">
+            <option value="queue">볼 예정</option>
+            <option value="done">봤음</option>
+          </select>
+        </label>
+
         <div class="form-grid">
           <label>
-            프로필
-            <select id="editProfile"></select>
+            카테고리
+            <div class="control-row">
+              <select id="editCategory"></select>
+              <button class="icon-button" id="newEditCategoryButton" type="button" title="카테고리 추가" aria-label="카테고리 추가">+</button>
+            </div>
           </label>
 
           <label>
-            상태
-            <select id="editStatus">
-              <option value="queue">볼 예정</option>
-              <option value="done">봤음</option>
-            </select>
+            분류 칸
+            <div class="control-row">
+              <select id="editSlot"></select>
+              <button class="icon-button" id="newEditSlotButton" type="button" title="분류 칸 추가" aria-label="분류 칸 추가">+</button>
+            </div>
           </label>
         </div>
-
-        <label>
-          태그
-          <input id="editTags" type="text" autocomplete="off">
-        </label>
 
         <label>
           메모
@@ -194,11 +207,11 @@
         <div class="card-body">
           <div class="card-meta">
             <span class="type-badge"></span>
-            <span class="profile-badge"></span>
+            <span class="category-badge"></span>
+            <span class="slot-badge"></span>
           </div>
           <h3 class="card-title"></h3>
           <p class="card-note"></p>
-          <div class="card-tags"></div>
         </div>
 
         <div class="card-actions">

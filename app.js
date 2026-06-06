@@ -1,5 +1,8 @@
 const STORAGE_KEY = "tube-vault-state-v1";
-const IMPORT_VERSION = 1;
+const IMPORT_VERSION = 2;
+const DEFAULT_CATEGORY_ID = "general";
+const DEFAULT_CATEGORY_NAME = "기본";
+const DEFAULT_SLOT = "기본";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -7,10 +10,11 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const initialState = {
   version: IMPORT_VERSION,
   profiles: ["나"],
+  categories: [{ id: DEFAULT_CATEGORY_ID, name: DEFAULT_CATEGORY_NAME, slots: [DEFAULT_SLOT] }],
   items: [],
   view: "all",
-  profileFilter: "all",
-  tagFilter: "all",
+  categoryFilter: "all",
+  slotFilter: "all",
   query: "",
   sort: "newest",
   selectedId: null
@@ -24,15 +28,16 @@ const els = {
   saveForm: $("#saveForm"),
   urlInput: $("#urlInput"),
   titleInput: $("#titleInput"),
-  profileInput: $("#profileInput"),
-  tagsInput: $("#tagsInput"),
+  categoryInput: $("#categoryInput"),
+  slotInput: $("#slotInput"),
+  newCategoryButton: $("#newCategoryButton"),
+  newSlotButton: $("#newSlotButton"),
   noteInput: $("#noteInput"),
   pasteButton: $("#pasteButton"),
   totalCount: $("#totalCount"),
   viewFilters: $("#viewFilters"),
-  profileFilter: $("#profileFilter"),
-  tagCloud: $("#tagCloud"),
-  newProfileButton: $("#newProfileButton"),
+  categoryFilter: $("#categoryFilter"),
+  slotCloud: $("#slotCloud"),
   searchInput: $("#searchInput"),
   sortInput: $("#sortInput"),
   videoGrid: $("#videoGrid"),
@@ -51,9 +56,11 @@ const els = {
   editForm: $("#editForm"),
   editId: $("#editId"),
   editTitle: $("#editTitle"),
-  editProfile: $("#editProfile"),
+  editCategory: $("#editCategory"),
+  editSlot: $("#editSlot"),
+  newEditCategoryButton: $("#newEditCategoryButton"),
+  newEditSlotButton: $("#newEditSlotButton"),
   editStatus: $("#editStatus"),
-  editTags: $("#editTags"),
   editNote: $("#editNote"),
   deleteButton: $("#deleteButton"),
   toast: $("#toast")
@@ -62,7 +69,8 @@ const els = {
 init();
 
 function init() {
-  ensureProfileOptions();
+  ensureLibraryShape();
+  ensureCategoryOptions();
   bindEvents();
   render();
   registerServiceWorker();
@@ -73,11 +81,21 @@ function bindEvents() {
   els.saveForm.addEventListener("submit", handleSave);
   els.pasteButton.addEventListener("click", pasteFromClipboard);
   els.viewFilters.addEventListener("click", handleViewFilter);
-  els.profileFilter.addEventListener("change", () => {
-    state.profileFilter = els.profileFilter.value;
+  els.categoryFilter.addEventListener("change", () => {
+    state.categoryFilter = els.categoryFilter.value;
+    state.slotFilter = "all";
     persistAndRender();
   });
-  els.newProfileButton.addEventListener("click", addProfile);
+  els.categoryInput.addEventListener("change", () => {
+    renderSlotOptions(els.categoryInput, els.slotInput);
+  });
+  els.editCategory.addEventListener("change", () => {
+    renderSlotOptions(els.editCategory, els.editSlot);
+  });
+  els.newCategoryButton.addEventListener("click", () => addCategory("save"));
+  els.newSlotButton.addEventListener("click", () => addSlot("save"));
+  els.newEditCategoryButton.addEventListener("click", () => addCategory("edit"));
+  els.newEditSlotButton.addEventListener("click", () => addSlot("edit"));
   els.searchInput.addEventListener("input", () => {
     state.query = els.searchInput.value.trim();
     persistAndRender(false);
@@ -86,7 +104,7 @@ function bindEvents() {
     state.sort = els.sortInput.value;
     persistAndRender();
   });
-  els.tagCloud.addEventListener("click", handleTagFilter);
+  els.slotCloud.addEventListener("click", handleSlotFilter);
   els.videoGrid.addEventListener("click", handleCardAction);
   els.closePlayerButton.addEventListener("click", closePlayer);
   els.exportButton.addEventListener("click", exportLibrary);
@@ -97,6 +115,7 @@ function bindEvents() {
   window.addEventListener("storage", (event) => {
     if (event.key === STORAGE_KEY) {
       state = loadState();
+      ensureLibraryShape();
       render();
     }
   });
@@ -126,8 +145,9 @@ function handleSave(event) {
   }
 
   const now = new Date().toISOString();
-  const tags = parseTags(els.tagsInput.value);
-  const profile = els.profileInput.value || "나";
+  const profile = "나";
+  const category = getCategory(els.categoryInput.value) || getDefaultCategory();
+  const slot = ensureCategorySlot(category.id, els.slotInput.value);
   let added = 0;
   let skipped = 0;
 
@@ -146,8 +166,10 @@ function handleSave(event) {
       title: parsed.length === 1 ? els.titleInput.value.trim() : "",
       author: "",
       note: els.noteInput.value.trim(),
-      tags,
+      tags: [],
       profile,
+      categoryId: category.id,
+      slot,
       status: "queue",
       favorite: false,
       createdAt: now,
@@ -166,7 +188,8 @@ function handleSave(event) {
 
   if (added > 0) {
     els.saveForm.reset();
-    els.profileInput.value = profile;
+    els.categoryInput.value = category.id;
+    renderSlotOptions(els.categoryInput, els.slotInput, slot);
   }
 
   const message = skipped
@@ -192,10 +215,10 @@ function handleViewFilter(event) {
   persistAndRender();
 }
 
-function handleTagFilter(event) {
-  const button = event.target.closest("[data-tag]");
+function handleSlotFilter(event) {
+  const button = event.target.closest("[data-slot]");
   if (!button) return;
-  state.tagFilter = button.dataset.tag;
+  state.slotFilter = button.dataset.slot;
   persistAndRender();
 }
 
@@ -229,37 +252,66 @@ function handleCardAction(event) {
   }
 }
 
-function addProfile() {
-  const name = window.prompt("추가할 프로필 이름");
+function addCategory(target) {
+  const name = window.prompt("추가할 카테고리 이름");
   if (!name) return;
-  const cleaned = name.trim().slice(0, 28);
+  const cleaned = cleanLabel(name, "");
   if (!cleaned) return;
-  ensureProfile(cleaned);
-  state.profileFilter = cleaned;
-  persistAndRender();
-  showToast(`${cleaned} 프로필을 추가했어요.`);
+  const category = ensureCategory(cleaned);
+  ensureCategoryOptions();
+  setCategoryTarget(target, category.id, DEFAULT_SLOT);
+  persist();
+  showToast(`${category.name} 카테고리를 추가했어요.`);
+}
+
+function addSlot(target) {
+  const categorySelect = target === "edit" ? els.editCategory : els.categoryInput;
+  const slotSelect = target === "edit" ? els.editSlot : els.slotInput;
+  const category = getCategory(categorySelect.value) || getDefaultCategory();
+  const name = window.prompt(`${category.name}에 추가할 분류 칸 이름`);
+  if (!name) return;
+  const slot = ensureCategorySlot(category.id, name);
+  renderSlotOptions(categorySelect, slotSelect, slot);
+  persist();
+  showToast(`${category.name} > ${slot} 칸을 추가했어요.`);
+}
+
+function setCategoryTarget(target, categoryId, slot) {
+  const categorySelect = target === "edit" ? els.editCategory : els.categoryInput;
+  const slotSelect = target === "edit" ? els.editSlot : els.slotInput;
+  categorySelect.value = categoryId;
+  renderSlotOptions(categorySelect, slotSelect, slot);
 }
 
 function openEditDialog(item) {
-  ensureProfileOptions();
+  ensureCategoryOptions();
   els.editId.value = item.id;
   els.editTitle.value = item.title || "";
-  els.editProfile.value = item.profile || "나";
+  els.editCategory.value = item.categoryId || DEFAULT_CATEGORY_ID;
+  renderSlotOptions(els.editCategory, els.editSlot, item.slot || DEFAULT_SLOT);
   els.editStatus.value = item.status || "queue";
-  els.editTags.value = (item.tags || []).join(", ");
   els.editNote.value = item.note || "";
   els.editDialog.showModal();
 }
 
 function saveEdit(event) {
   event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    els.editDialog.close();
+    return;
+  }
+
   const item = state.items.find((entry) => entry.id === els.editId.value);
   if (!item) return;
 
+  const category = getCategory(els.editCategory.value) || getDefaultCategory();
+  const slot = ensureCategorySlot(category.id, els.editSlot.value);
   item.title = els.editTitle.value.trim() || fallbackTitle(item);
-  item.profile = els.editProfile.value || "나";
+  item.profile = item.profile || "나";
+  item.categoryId = category.id;
+  item.slot = slot;
   item.status = els.editStatus.value;
-  item.tags = parseTags(els.editTags.value);
+  item.tags = Array.isArray(item.tags) ? item.tags : [];
   item.note = els.editNote.value.trim();
   item.updatedAt = new Date().toISOString();
   ensureProfile(item.profile);
@@ -297,12 +349,13 @@ function closePlayer() {
 }
 
 function render() {
-  ensureProfileOptions();
+  ensureLibraryShape();
+  ensureCategoryOptions();
   els.totalCount.value = String(state.items.length);
   els.searchInput.value = state.query;
   els.sortInput.value = state.sort;
   renderFilterState();
-  renderTags();
+  renderSlotFilters();
   renderCards();
   renderPlayer();
 }
@@ -312,31 +365,34 @@ function renderFilterState() {
     button.classList.toggle("active", button.dataset.view === state.view);
   });
 
-  els.profileFilter.innerHTML = "";
-  const allOption = new Option("모든 프로필", "all");
-  els.profileFilter.add(allOption);
-  state.profiles.forEach((profile) => els.profileFilter.add(new Option(profile, profile)));
-  els.profileFilter.value = state.profileFilter;
+  els.categoryFilter.innerHTML = "";
+  const allCategoryOption = new Option("모든 카테고리", "all");
+  els.categoryFilter.add(allCategoryOption);
+  state.categories.forEach((category) => els.categoryFilter.add(new Option(category.name, category.id)));
+  els.categoryFilter.value = state.categoryFilter;
 }
 
-function renderTags() {
-  const tags = [...new Set(state.items.flatMap((item) => item.tags || []))].sort((a, b) => a.localeCompare(b, "ko"));
-  els.tagCloud.innerHTML = "";
+function renderSlotFilters() {
+  const slots = getVisibleSlots();
+  if (state.slotFilter !== "all" && !slots.includes(state.slotFilter)) {
+    state.slotFilter = "all";
+  }
 
+  els.slotCloud.innerHTML = "";
   const allButton = document.createElement("button");
   allButton.type = "button";
-  allButton.className = `tag-button ${state.tagFilter === "all" ? "active" : ""}`;
-  allButton.dataset.tag = "all";
-  allButton.textContent = "모든 태그";
-  els.tagCloud.append(allButton);
+  allButton.className = `slot-button ${state.slotFilter === "all" ? "active" : ""}`;
+  allButton.dataset.slot = "all";
+  allButton.textContent = "모든 분류 칸";
+  els.slotCloud.append(allButton);
 
-  tags.forEach((tag) => {
+  slots.forEach((slot) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `tag-button ${state.tagFilter === tag ? "active" : ""}`;
-    button.dataset.tag = tag;
-    button.textContent = `#${tag}`;
-    els.tagCloud.append(button);
+    button.className = `slot-button ${state.slotFilter === slot ? "active" : ""}`;
+    button.dataset.slot = slot;
+    button.textContent = slot;
+    els.slotCloud.append(button);
   });
 }
 
@@ -360,16 +416,10 @@ function renderCards() {
     typeBadge.textContent = item.type === "short" ? "숏츠" : "영상";
     typeBadge.classList.add(item.type === "short" ? "short" : "video");
 
-    $(".profile-badge", node).textContent = item.profile || "나";
+    $(".category-badge", node).textContent = getCategoryName(item.categoryId);
+    $(".slot-badge", node).textContent = item.slot || DEFAULT_SLOT;
     $(".card-title", node).textContent = displayTitle(item);
     $(".card-note", node).textContent = item.note || item.author || " ";
-
-    const tagWrap = $(".card-tags", node);
-    (item.tags || []).forEach((tag) => {
-      const chip = document.createElement("span");
-      chip.textContent = `#${tag}`;
-      tagWrap.append(chip);
-    });
 
     const favoriteButton = $(".favorite-button", node);
     favoriteButton.textContent = item.favorite ? "★" : "☆";
@@ -411,16 +461,16 @@ function getFilteredItems() {
       if (state.view === "queue" && item.status === "done") return false;
       if (state.view === "done" && item.status !== "done") return false;
       if (state.view === "favorite" && !item.favorite) return false;
-      if (state.profileFilter !== "all" && item.profile !== state.profileFilter) return false;
-      if (state.tagFilter !== "all" && !(item.tags || []).includes(state.tagFilter)) return false;
+      if (state.categoryFilter !== "all" && item.categoryId !== state.categoryFilter) return false;
+      if (state.slotFilter !== "all" && item.slot !== state.slotFilter) return false;
 
       if (!query) return true;
       const haystack = normalizeText([
         item.title,
         item.author,
         item.note,
-        item.profile,
-        ...(item.tags || [])
+        getCategoryName(item.categoryId),
+        item.slot
       ].join(" "));
       return haystack.includes(query);
     })
@@ -430,7 +480,11 @@ function getFilteredItems() {
 function sortItems(a, b) {
   if (state.sort === "oldest") return new Date(a.createdAt) - new Date(b.createdAt);
   if (state.sort === "title") return displayTitle(a).localeCompare(displayTitle(b), "ko");
-  if (state.sort === "profile") return (a.profile || "").localeCompare(b.profile || "", "ko");
+  if (state.sort === "category") {
+    return getCategoryName(a.categoryId).localeCompare(getCategoryName(b.categoryId), "ko")
+      || (a.slot || "").localeCompare(b.slot || "", "ko")
+      || new Date(b.createdAt) - new Date(a.createdAt);
+  }
   return new Date(b.createdAt) - new Date(a.createdAt);
 }
 
@@ -519,6 +573,7 @@ function exportLibrary() {
     exportedAt: new Date().toISOString(),
     app: "튜브서랍",
     profiles: state.profiles,
+    categories: state.categories,
     items: state.items
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -542,6 +597,13 @@ async function importLibrary(event) {
     const incomingItems = Array.isArray(imported) ? imported : imported.items;
     if (!Array.isArray(incomingItems)) throw new Error("items missing");
 
+    ensureLibraryShape();
+    const importedProfiles = Array.isArray(imported.profiles) ? imported.profiles : [];
+    importedProfiles.forEach((profile) => ensureProfile(String(profile)));
+
+    const importedCategories = Array.isArray(imported.categories) ? imported.categories : [];
+    importedCategories.forEach(mergeImportedCategory);
+
     const existing = new Set(state.items.map((item) => `${item.type}:${item.videoId}`));
     const cleanedItems = incomingItems.map(cleanImportedItem).filter(Boolean);
     let added = 0;
@@ -554,9 +616,7 @@ async function importLibrary(event) {
       added += 1;
     });
 
-    const importedProfiles = Array.isArray(imported.profiles) ? imported.profiles : [];
-    importedProfiles.forEach((profile) => ensureProfile(String(profile)));
-    state.items.forEach((item) => ensureProfile(item.profile || "나"));
+    ensureLibraryShape();
     persistAndRender();
     showToast(`${added}개를 가져왔어요.`);
   } catch {
@@ -570,6 +630,13 @@ function cleanImportedItem(raw) {
   const parsed = parseYoutubeUrl(raw.url || `https://www.youtube.com/watch?v=${raw.videoId || ""}`);
   if (!parsed) return null;
   const now = new Date().toISOString();
+  let categoryId = String(raw.categoryId || "").trim();
+  if (!getCategory(categoryId)) {
+    const categoryName = String(raw.categoryName || raw.category || "").trim();
+    categoryId = categoryName ? ensureCategory(categoryName).id : DEFAULT_CATEGORY_ID;
+  }
+  const slot = ensureCategorySlot(categoryId, raw.slot || raw.section || raw.group || DEFAULT_SLOT);
+
   return {
     id: raw.id || createId(parsed.videoId),
     videoId: parsed.videoId,
@@ -580,6 +647,8 @@ function cleanImportedItem(raw) {
     note: String(raw.note || "").trim(),
     tags: Array.isArray(raw.tags) ? raw.tags.map(String).map((tag) => tag.trim()).filter(Boolean) : parseTags(raw.tags || ""),
     profile: String(raw.profile || "나").trim() || "나",
+    categoryId,
+    slot,
     status: raw.status === "done" ? "done" : "queue",
     favorite: Boolean(raw.favorite),
     createdAt: raw.createdAt || now,
@@ -587,21 +656,167 @@ function cleanImportedItem(raw) {
   };
 }
 
-function ensureProfileOptions() {
-  state.profiles = [...new Set((state.profiles.length ? state.profiles : ["나"]).map((profile) => String(profile).trim()).filter(Boolean))];
-  if (!state.profiles.includes("나")) state.profiles.unshift("나");
+function ensureCategoryOptions() {
+  ensureLibraryShape();
 
-  [els.profileInput, els.editProfile].forEach((select) => {
+  [els.categoryInput, els.editCategory].forEach((select) => {
     const current = select.value;
     select.innerHTML = "";
-    state.profiles.forEach((profile) => select.add(new Option(profile, profile)));
-    select.value = state.profiles.includes(current) ? current : state.profiles[0];
+    state.categories.forEach((category) => select.add(new Option(category.name, category.id)));
+    select.value = getCategory(current) ? current : state.categories[0].id;
   });
+
+  renderSlotOptions(els.categoryInput, els.slotInput);
+  renderSlotOptions(els.editCategory, els.editSlot);
+}
+
+function renderSlotOptions(categorySelect, slotSelect, preferredSlot = slotSelect.value) {
+  const category = getCategory(categorySelect.value) || getDefaultCategory();
+  categorySelect.value = category.id;
+  const slot = ensureCategorySlot(category.id, preferredSlot || category.slots[0] || DEFAULT_SLOT);
+
+  slotSelect.innerHTML = "";
+  category.slots.forEach((value) => slotSelect.add(new Option(value, value)));
+  slotSelect.value = slot;
+}
+
+function ensureLibraryShape() {
+  state.profiles = Array.isArray(state.profiles) ? state.profiles : ["나"];
+  state.items = Array.isArray(state.items) ? state.items : [];
+
+  const cleanedCategories = [];
+  const seenIds = new Set();
+  const rawCategories = Array.isArray(state.categories) ? state.categories : [];
+
+  rawCategories.forEach((raw) => {
+    const name = cleanLabel(typeof raw === "string" ? raw : raw?.name, "");
+    if (!name) return;
+    let id = String(typeof raw === "object" && raw?.id ? raw.id : "").trim() || createCategoryId();
+    while (seenIds.has(id)) id = createCategoryId();
+    seenIds.add(id);
+    cleanedCategories.push({
+      id,
+      name,
+      slots: cleanSlots(typeof raw === "object" ? raw.slots : [])
+    });
+  });
+
+  if (!cleanedCategories.some((category) => category.id === DEFAULT_CATEGORY_ID)) {
+    cleanedCategories.unshift(createDefaultCategory());
+    seenIds.add(DEFAULT_CATEGORY_ID);
+  }
+
+  state.categories = cleanedCategories.map((category) => ({
+    ...category,
+    slots: category.slots.length ? category.slots : [DEFAULT_SLOT]
+  }));
+
+  state.items.forEach((item) => {
+    const existingCategory = getCategory(item.categoryId);
+    if (!existingCategory) {
+      item.categoryId = DEFAULT_CATEGORY_ID;
+    }
+    item.slot = ensureCategorySlot(item.categoryId, item.slot || DEFAULT_SLOT);
+  });
+
+  if (state.categoryFilter !== "all" && !getCategory(state.categoryFilter)) state.categoryFilter = "all";
+  if (!state.slotFilter) state.slotFilter = "all";
+  delete state.profileFilter;
+  delete state.tagFilter;
+  if (!state.view) state.view = "all";
+  if (!state.sort) state.sort = "newest";
+}
+
+function mergeImportedCategory(raw) {
+  const name = cleanLabel(typeof raw === "string" ? raw : raw?.name, "");
+  if (!name) return null;
+  const incomingId = String(typeof raw === "object" && raw?.id ? raw.id : "").trim();
+  let category = incomingId ? getCategory(incomingId) : null;
+  if (!category) category = state.categories.find((entry) => entry.name === name);
+
+  if (!category) {
+    category = {
+      id: incomingId || createCategoryId(),
+      name,
+      slots: []
+    };
+    state.categories.push(category);
+  }
+
+  cleanSlots(typeof raw === "object" ? raw.slots : []).forEach((slot) => ensureCategorySlot(category.id, slot));
+  if (!category.slots.length) category.slots.push(DEFAULT_SLOT);
+  return category;
 }
 
 function ensureProfile(profile) {
-  const cleaned = String(profile || "나").trim() || "나";
+  const cleaned = cleanLabel(profile, "나");
   if (!state.profiles.includes(cleaned)) state.profiles.push(cleaned);
+}
+
+function ensureCategory(name) {
+  const cleaned = cleanLabel(name, DEFAULT_CATEGORY_NAME);
+  const existing = state.categories.find((category) => category.name === cleaned);
+  if (existing) return existing;
+  const category = { id: createCategoryId(), name: cleaned, slots: [DEFAULT_SLOT] };
+  state.categories.push(category);
+  return category;
+}
+
+function ensureCategorySlot(categoryId, slotName) {
+  const category = getCategory(categoryId) || getDefaultCategory();
+  const slot = cleanLabel(slotName, DEFAULT_SLOT);
+  if (!category.slots.includes(slot)) {
+    category.slots.push(slot);
+    category.slots.sort((a, b) => {
+      if (a === DEFAULT_SLOT) return -1;
+      if (b === DEFAULT_SLOT) return 1;
+      return a.localeCompare(b, "ko");
+    });
+  }
+  return slot;
+}
+
+function getCategory(categoryId) {
+  return state.categories.find((category) => category.id === categoryId) || null;
+}
+
+function getDefaultCategory() {
+  return getCategory(DEFAULT_CATEGORY_ID) || state.categories[0] || createDefaultCategory();
+}
+
+function getCategoryName(categoryId) {
+  return getCategory(categoryId)?.name || DEFAULT_CATEGORY_NAME;
+}
+
+function getVisibleSlots() {
+  const categories = state.categoryFilter === "all"
+    ? state.categories
+    : state.categories.filter((category) => category.id === state.categoryFilter);
+  return [...new Set(categories.flatMap((category) => category.slots || []))]
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a === DEFAULT_SLOT) return -1;
+      if (b === DEFAULT_SLOT) return 1;
+      return a.localeCompare(b, "ko");
+    });
+}
+
+function cleanSlots(slots) {
+  return [...new Set((Array.isArray(slots) ? slots : [])
+    .map((slot) => cleanLabel(slot, ""))
+    .filter(Boolean))];
+}
+
+function cleanLabel(value, fallback) {
+  return String(value || "").trim().slice(0, 28) || fallback;
+}
+
+function createDefaultCategory() {
+  return { id: DEFAULT_CATEGORY_ID, name: DEFAULT_CATEGORY_NAME, slots: [DEFAULT_SLOT] };
+}
+
+function createCategoryId() {
+  return `category-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function parseTags(value) {
@@ -639,6 +854,7 @@ function persistAndRender(show = true) {
 }
 
 function persist() {
+  state.version = IMPORT_VERSION;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -650,6 +866,7 @@ function loadState() {
       ...structuredClone(initialState),
       ...stored,
       profiles: Array.isArray(stored.profiles) ? stored.profiles : ["나"],
+      categories: Array.isArray(stored.categories) ? stored.categories : structuredClone(initialState.categories),
       items: Array.isArray(stored.items) ? stored.items : []
     };
   } catch {

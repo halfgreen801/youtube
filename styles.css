@@ -184,7 +184,8 @@ p {
 
 .count-pill,
 .type-badge,
-.profile-badge,
+.category-badge,
+.slot-badge,
 .duration-chip {
   display: inline-flex;
   align-items: center;
@@ -246,13 +247,20 @@ select:focus {
   gap: 10px;
 }
 
+.control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px;
+  gap: 8px;
+}
+
 .primary-button,
 .secondary-button,
 .ghost-button,
 .danger-button,
 .icon-button,
 .mini-button,
-.filter-button {
+.filter-button,
+.slot-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -279,6 +287,7 @@ select:focus {
 .secondary-button,
 .ghost-button,
 .filter-button,
+.slot-button,
 .mini-button,
 .icon-button {
   color: var(--ink);
@@ -289,6 +298,7 @@ select:focus {
 .secondary-button:hover,
 .ghost-button:hover,
 .filter-button:hover,
+.slot-button:hover,
 .mini-button:hover,
 .icon-button:hover {
   border-color: var(--line-strong);
@@ -338,12 +348,14 @@ select:focus {
 }
 
 .filter-button.active,
+.slot-button.active,
 .tag-button.active {
   color: #fff;
   border-color: var(--accent-dark);
   background: var(--accent);
 }
 
+.slot-cloud,
 .tag-cloud {
   display: flex;
   flex-wrap: wrap;
@@ -352,6 +364,7 @@ select:focus {
   margin-top: 14px;
 }
 
+.slot-button,
 .tag-button {
   min-height: 30px;
   border: 1px solid var(--line);
@@ -520,6 +533,18 @@ select:focus {
   background: var(--blue);
 }
 
+.category-badge {
+  color: #23423b;
+  border-color: #bfddd5;
+  background: #e8f4f1;
+}
+
+.slot-badge {
+  color: #4d3f1c;
+  border-color: #ead8a8;
+  background: #fbf2d7;
+}
+
 .card-title {
   display: -webkit-box;
   min-height: 2.7em;
@@ -539,24 +564,6 @@ select:focus {
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-height: 24px;
-}
-
-.card-tags span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  border-radius: 999px;
-  padding: 0 8px;
-  color: #3b524e;
-  background: #e9f0ee;
-  font-size: 0.76rem;
 }
 
 .card-actions {
