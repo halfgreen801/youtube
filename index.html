@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#22312f">
+    <title>튜브서랍</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="튜브서랍 홈">
+          <img src="icon.svg" alt="" class="brand-mark">
+          <span>
+            <strong>튜브서랍</strong>
+            <small>계정 밖 YouTube 보관함</small>
+          </span>
+        </a>
+
+        <div class="top-actions">
+          <button class="ghost-button" id="installButton" type="button" hidden>설치</button>
+          <button class="ghost-button" id="exportButton" type="button">내보내기</button>
+          <label class="ghost-button import-button">
+            가져오기
+            <input id="importInput" type="file" accept="application/json,.json">
+          </label>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="sidebar" aria-label="저장과 필터">
+          <section class="capture-panel" aria-labelledby="captureTitle">
+            <div class="section-heading">
+              <h1 id="captureTitle">저장</h1>
+              <output id="totalCount" class="count-pill">0</output>
+            </div>
+
+            <form id="saveForm" class="save-form">
+              <label for="urlInput">YouTube 링크</label>
+              <textarea id="urlInput" rows="4" autocomplete="off" spellcheck="false" placeholder="https://youtu.be/..."></textarea>
+
+              <div class="form-grid">
+                <label>
+                  제목
+                  <input id="titleInput" type="text" autocomplete="off" placeholder="비워두면 자동 시도">
+                </label>
+
+                <label>
+                  프로필
+                  <select id="profileInput"></select>
+                </label>
+              </div>
+
+              <label for="tagsInput">태그</label>
+              <input id="tagsInput" type="text" autocomplete="off" placeholder="요리, 운동, 공부">
+
+              <label for="noteInput">메모</label>
+              <textarea id="noteInput" rows="3" placeholder="왜 저장했는지"></textarea>
+
+              <div class="form-actions">
+                <button class="primary-button" type="submit">저장</button>
+                <button class="secondary-button" id="pasteButton" type="button">붙여넣기</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="filter-panel" aria-labelledby="filterTitle">
+            <div class="section-heading">
+              <h2 id="filterTitle">보기</h2>
+              <button id="newProfileButton" class="icon-button" type="button" title="프로필 추가" aria-label="프로필 추가">+</button>
+            </div>
+
+            <nav class="filter-list" id="viewFilters" aria-label="상태 필터">
+              <button class="filter-button active" type="button" data-view="all">전체</button>
+              <button class="filter-button" type="button" data-view="video">영상</button>
+              <button class="filter-button" type="button" data-view="short">숏츠</button>
+              <button class="filter-button" type="button" data-view="queue">볼 예정</button>
+              <button class="filter-button" type="button" data-view="done">봤음</button>
+              <button class="filter-button" type="button" data-view="favorite">즐겨찾기</button>
+            </nav>
+
+            <label class="select-label">
+              프로필 보기
+              <select id="profileFilter"></select>
+            </label>
+
+            <div class="tag-cloud" id="tagCloud" aria-label="태그 필터"></div>
+          </section>
+        </aside>
+
+        <section class="content" aria-label="저장된 YouTube 목록">
+          <div class="content-toolbar">
+            <label class="search-box" aria-label="검색">
+              <span>⌕</span>
+              <input id="searchInput" type="search" autocomplete="off" placeholder="제목, 메모, 태그 검색">
+            </label>
+
+            <select id="sortInput" class="sort-select" aria-label="정렬">
+              <option value="newest">최근 저장순</option>
+              <option value="oldest">오래된순</option>
+              <option value="title">제목순</option>
+              <option value="profile">프로필순</option>
+            </select>
+          </div>
+
+          <section class="player-panel" id="playerPanel" hidden aria-label="재생">
+            <div class="player-heading">
+              <div>
+                <span id="playerType" class="type-badge">영상</span>
+                <h2 id="playerTitle">선택한 영상</h2>
+              </div>
+              <div class="player-actions">
+                <a id="openPlayerLink" class="ghost-button" target="_blank" rel="noreferrer">YouTube</a>
+                <button id="closePlayerButton" class="icon-button" type="button" title="닫기" aria-label="닫기">×</button>
+              </div>
+            </div>
+            <div class="player-frame">
+              <iframe id="playerFrame" title="YouTube player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+            </div>
+          </section>
+
+          <div class="empty-state" id="emptyState">
+            <strong>아직 저장한 링크가 없어요.</strong>
+            <span>YouTube 영상이나 숏츠 링크를 붙여넣으면 여기에 모입니다.</span>
+          </div>
+
+          <div class="video-grid" id="videoGrid"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="edit-dialog" id="editDialog">
+      <form method="dialog" id="editForm">
+        <div class="dialog-heading">
+          <h2>항목 편집</h2>
+          <button class="icon-button" value="cancel" type="submit" aria-label="닫기" title="닫기">×</button>
+        </div>
+
+        <input type="hidden" id="editId">
+
+        <label>
+          제목
+          <input id="editTitle" type="text" autocomplete="off">
+        </label>
+
+        <div class="form-grid">
+          <label>
+            프로필
+            <select id="editProfile"></select>
+          </label>
+
+          <label>
+            상태
+            <select id="editStatus">
+              <option value="queue">볼 예정</option>
+              <option value="done">봤음</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          태그
+          <input id="editTags" type="text" autocomplete="off">
+        </label>
+
+        <label>
+          메모
+          <textarea id="editNote" rows="4"></textarea>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="danger-button" id="deleteButton" type="button">삭제</button>
+          <span></span>
+          <button class="secondary-button" value="cancel" type="submit">취소</button>
+          <button class="primary-button" id="saveEditButton" value="default" type="submit">저장</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <template id="videoCardTemplate">
+      <article class="video-card">
+        <button class="thumb-button" type="button" aria-label="재생">
+          <img class="thumb" alt="">
+          <span class="play-chip">▶</span>
+          <span class="duration-chip"></span>
+        </button>
+
+        <div class="card-body">
+          <div class="card-meta">
+            <span class="type-badge"></span>
+            <span class="profile-badge"></span>
+          </div>
+          <h3 class="card-title"></h3>
+          <p class="card-note"></p>
+          <div class="card-tags"></div>
+        </div>
+
+        <div class="card-actions">
+          <button class="mini-button favorite-button" type="button" title="즐겨찾기" aria-label="즐겨찾기">☆</button>
+          <button class="mini-button status-button" type="button" title="봤음 표시" aria-label="봤음 표시">✓</button>
+          <a class="mini-button open-button" target="_blank" rel="noreferrer" title="YouTube에서 열기" aria-label="YouTube에서 열기">↗</a>
+          <button class="mini-button edit-button" type="button" title="편집" aria-label="편집">✎</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="튜브서랍">
+  <rect width="512" height="512" rx="96" fill="#22312f"/>
+  <path d="M104 142c0-31 25-56 56-56h192c31 0 56 25 56 56v228c0 31-25 56-56 56H160c-31 0-56-25-56-56V142Z" fill="#f9fbfb"/>
+  <path d="M132 179h248v54H132v-54Z" fill="#2c7a68"/>
+  <path d="M132 256h248v114c0 13-11 24-24 24H156c-13 0-24-11-24-24V256Z" fill="#e7eeee"/>
+  <path d="M222 287v74l67-37-67-37Z" fill="#c84f4b"/>
+  <path d="M169 111h174c17 0 31 14 31 31v12H138v-12c0-17 14-31 31-31Z" fill="#3d6fc0"/>
+</svg>
