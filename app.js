@@ -1,9 +1,12 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.06.23.4";
+const APP_VERSION = "2026.06.23.5";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
+const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
 const IMPORT_VERSION = 2;
 const CATEGORY_SHARE_VERSION = 3;
+const DEFAULT_PAGE_SIZE = 10;
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
 const DEFAULT_CATEGORY_ID = "general";
 const DEFAULT_CATEGORY_NAME = "기본";
 const DEFAULT_SLOT = "기본";
@@ -78,6 +81,8 @@ let toastTimer = 0;
 let deferredInstallPrompt = null;
 let waitingServiceWorker = null;
 let refreshingForServiceWorker = false;
+let currentPage = 1;
+let pageSize = loadPageSize();
 let draftTheme = { ...currentTheme };
 let themeDialogSaved = false;
 let syncMeta = loadSyncMeta();
@@ -114,6 +119,18 @@ const els = {
   slotCloud: $("#slotCloud"),
   searchInput: $("#searchInput"),
   sortInput: $("#sortInput"),
+  paginationPanel: $("#paginationPanel"),
+  paginationSummary: $("#paginationSummary"),
+  pageSizeSelect: $("#pageSizeSelect"),
+  firstPageButton: $("#firstPageButton"),
+  prevPageButton: $("#prevPageButton"),
+  nextPageButton: $("#nextPageButton"),
+  lastPageButton: $("#lastPageButton"),
+  pageNumberList: $("#pageNumberList"),
+  pageJumpForm: $("#pageJumpForm"),
+  pageJumpInput: $("#pageJumpInput"),
+  pageJumpButton: $("#pageJumpButton"),
+  pageTotalText: $("#pageTotalText"),
   videoGrid: $("#videoGrid"),
   emptyState: $("#emptyState"),
   migrationEmptyNote: $("#migrationEmptyNote"),
@@ -215,10 +232,12 @@ function bindEvents() {
   els.categoryFilter.addEventListener("change", () => {
     state.categoryFilter = els.categoryFilter.value;
     state.slotFilter = "all";
+    resetToFirstPage();
     persistAndRender();
   });
   els.typeFilter.addEventListener("change", () => {
     state.typeFilter = els.typeFilter.value;
+    resetToFirstPage();
     persistAndRender();
   });
   els.typeInput.addEventListener("change", updateTypeInputHelp);
@@ -234,11 +253,24 @@ function bindEvents() {
   els.newEditSlotButton.addEventListener("click", () => addSlot("edit"));
   els.searchInput.addEventListener("input", () => {
     state.query = els.searchInput.value.trim();
+    resetToFirstPage();
     persistAndRender(false);
   });
   els.sortInput.addEventListener("change", () => {
     state.sort = els.sortInput.value;
+    resetToFirstPage();
     persistAndRender();
+  });
+  els.pageSizeSelect.addEventListener("change", handlePageSizeChange);
+  els.firstPageButton.addEventListener("click", () => goToPage(1));
+  els.prevPageButton.addEventListener("click", () => goToPage(currentPage - 1));
+  els.nextPageButton.addEventListener("click", () => goToPage(currentPage + 1));
+  els.lastPageButton.addEventListener("click", () => goToPage(getTotalPages(getFilteredItems().length)));
+  els.pageNumberList.addEventListener("click", handlePageNumberClick);
+  els.pageJumpForm.addEventListener("submit", handlePageJump);
+  els.pageJumpButton.addEventListener("click", handlePageJump);
+  els.pageJumpInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") handlePageJump(event);
   });
   els.slotCloud.addEventListener("click", handleSlotFilter);
   els.videoGrid.addEventListener("click", handleCardAction);
@@ -414,6 +446,7 @@ function handleSave(event) {
   });
 
   ensureProfile(profile);
+  if (added > 0) resetToFirstPage();
   persistAndRender();
   hydrateMissingTitles();
 
@@ -478,6 +511,7 @@ function handleViewFilter(event) {
   const button = event.target.closest("[data-view]");
   if (!button) return;
   state.view = button.dataset.view;
+  resetToFirstPage();
   persistAndRender();
 }
 
@@ -485,6 +519,7 @@ function handleSlotFilter(event) {
   const button = event.target.closest("[data-slot]");
   if (!button) return;
   state.slotFilter = button.dataset.slot;
+  resetToFirstPage();
   persistAndRender();
 }
 
@@ -636,7 +671,14 @@ function render() {
   els.sortInput.value = state.sort;
   renderFilterState();
   renderSlotFilters();
-  renderCards();
+
+  const filteredItems = getFilteredItems();
+  const totalPages = getTotalPages(filteredItems.length);
+  currentPage = clampPage(currentPage, totalPages);
+  const visibleItems = getPaginatedItems(filteredItems);
+
+  renderCards(visibleItems, filteredItems.length);
+  renderPagination(filteredItems.length);
   renderPlayer();
   renderSyncPanel();
 }
@@ -678,11 +720,10 @@ function renderSlotFilters() {
   });
 }
 
-function renderCards() {
-  const items = getFilteredItems();
+function renderCards(items, filteredItemCount) {
   els.videoGrid.innerHTML = "";
-  els.emptyState.hidden = items.length > 0;
-  renderMigrationEmptyNote(items.length);
+  els.emptyState.hidden = filteredItemCount > 0;
+  renderMigrationEmptyNote(filteredItemCount);
 
   items.forEach((item) => {
     const node = els.cardTemplate.content.firstElementChild.cloneNode(true);
@@ -756,7 +797,9 @@ function getFilteredItems() {
 
       if (!query) return true;
       const haystack = normalizeText([
-        item.title,
+        displayTitle(item),
+        item.videoId,
+        item.url,
         item.author,
         item.note,
         getCategoryName(item.categoryId),
@@ -776,6 +819,155 @@ function sortItems(a, b) {
       || new Date(b.createdAt) - new Date(a.createdAt);
   }
   return new Date(b.createdAt) - new Date(a.createdAt);
+}
+
+function getPaginatedItems(items) {
+  const start = (currentPage - 1) * pageSize;
+  return items.slice(start, start + pageSize);
+}
+
+function getTotalPages(totalItems) {
+  return Math.max(1, Math.ceil(totalItems / pageSize));
+}
+
+function clampPage(page, totalPages) {
+  const safePage = Number.parseInt(page, 10) || 1;
+  return Math.min(Math.max(safePage, 1), totalPages);
+}
+
+function resetToFirstPage() {
+  currentPage = 1;
+}
+
+function goToPage(page) {
+  const totalPages = getTotalPages(getFilteredItems().length);
+  const nextPage = clampPage(page, totalPages);
+  if (nextPage === currentPage) {
+    renderPagination(getFilteredItems().length);
+    return;
+  }
+  currentPage = nextPage;
+  render();
+}
+
+function handlePageSizeChange() {
+  const nextSize = Number.parseInt(els.pageSizeSelect.value, 10);
+  pageSize = PAGE_SIZE_OPTIONS.includes(nextSize) ? nextSize : DEFAULT_PAGE_SIZE;
+  savePageSize(pageSize);
+  resetToFirstPage();
+  render();
+}
+
+function handlePageNumberClick(event) {
+  const button = event.target.closest("[data-page]");
+  if (!button) return;
+  goToPage(button.dataset.page);
+}
+
+function handlePageJump(event) {
+  event.preventDefault();
+  const value = Number.parseInt(els.pageJumpInput.value, 10);
+  if (Number.isNaN(value)) {
+    showToast("이동할 페이지 번호를 입력하세요.");
+    els.pageJumpInput.focus();
+    return;
+  }
+  goToPage(value);
+}
+
+function renderPagination(totalItems) {
+  const totalPages = getTotalPages(totalItems);
+  currentPage = clampPage(currentPage, totalPages);
+  const start = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const end = Math.min(currentPage * pageSize, totalItems);
+  const isFiltered = hasActiveItemFilter();
+  const summaryPrefix = isFiltered ? "필터 결과" : "전체";
+
+  els.pageSizeSelect.value = String(pageSize);
+  els.paginationSummary.textContent = totalItems === 0
+    ? "표시할 항목이 없습니다."
+    : `${summaryPrefix} ${totalItems}개 중 ${start}-${end}개 표시`;
+
+  els.firstPageButton.disabled = totalItems === 0 || currentPage === 1;
+  els.prevPageButton.disabled = totalItems === 0 || currentPage === 1;
+  els.nextPageButton.disabled = totalItems === 0 || currentPage === totalPages;
+  els.lastPageButton.disabled = totalItems === 0 || currentPage === totalPages;
+  els.pageJumpInput.disabled = totalItems === 0;
+  els.pageJumpInput.min = "1";
+  els.pageJumpInput.max = String(totalPages);
+  els.pageJumpInput.placeholder = String(currentPage);
+  els.pageJumpInput.value = String(currentPage);
+  els.pageTotalText.textContent = `/ ${totalPages}`;
+
+  renderPageNumberButtons(totalItems, totalPages);
+}
+
+function renderPageNumberButtons(totalItems, totalPages) {
+  els.pageNumberList.innerHTML = "";
+  const pages = getPageWindow(currentPage, totalPages);
+  let previousPage = 0;
+
+  pages.forEach((page) => {
+    if (previousPage && page - previousPage > 1) {
+      const ellipsis = document.createElement("span");
+      ellipsis.className = "page-ellipsis";
+      ellipsis.textContent = "...";
+      els.pageNumberList.append(ellipsis);
+    }
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `page-button ${page === currentPage ? "is-active" : ""}`;
+    button.dataset.page = String(page);
+    button.textContent = String(page);
+    button.disabled = totalItems === 0;
+    button.setAttribute("aria-label", `${page}페이지로 이동`);
+    if (page === currentPage) button.setAttribute("aria-current", "page");
+    els.pageNumberList.append(button);
+    previousPage = page;
+  });
+}
+
+function getPageWindow(page, totalPages) {
+  if (totalPages <= 10) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const pages = new Set([1, totalPages]);
+
+  for (let nextPage = page - 2; nextPage <= page + 2; nextPage += 1) {
+    if (nextPage >= 1 && nextPage <= totalPages) pages.add(nextPage);
+  }
+
+  if (page <= 4) {
+    for (let nextPage = 1; nextPage <= 6; nextPage += 1) pages.add(nextPage);
+  }
+
+  if (page >= totalPages - 3) {
+    for (let nextPage = totalPages - 5; nextPage <= totalPages; nextPage += 1) {
+      if (nextPage >= 1) pages.add(nextPage);
+    }
+  }
+
+  return Array.from(pages).sort((a, b) => a - b);
+}
+
+function hasActiveItemFilter() {
+  return state.view !== "all"
+    || state.typeFilter !== "all"
+    || state.categoryFilter !== "all"
+    || state.slotFilter !== "all"
+    || Boolean(state.query);
+}
+
+function loadPageSize() {
+  const stored = Number.parseInt(localStorage.getItem(PAGE_SIZE_STORAGE_KEY), 10);
+  return PAGE_SIZE_OPTIONS.includes(stored) ? stored : DEFAULT_PAGE_SIZE;
+}
+
+function savePageSize(size) {
+  const normalized = PAGE_SIZE_OPTIONS.includes(size) ? size : DEFAULT_PAGE_SIZE;
+  localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(normalized));
 }
 
 function parseYoutubeLinks(text) {
@@ -1298,6 +1490,7 @@ async function pullCloudState() {
 
     backupLocalState("cloud-pull");
     applyStateObject(row.data);
+    resetToFirstPage();
     syncState.needsCloudChoice = false;
     syncState.cloudRow = row;
     markCloudSynced(row.updated_at || new Date().toISOString());
@@ -1346,6 +1539,7 @@ async function mergeCloudState() {
 
     backupLocalState("cloud-merge");
     mergeStateObject(row.data);
+    resetToFirstPage();
     syncState.needsCloudChoice = false;
     persistAndRender(false);
     await upsertCloudState();
@@ -1952,6 +2146,7 @@ async function importLibrary(event) {
     });
 
     ensureLibraryShape();
+    if (added > 0) resetToFirstPage();
     persistAndRender();
     showToast(isCategoryShare && sharedCategoryName
       ? `${sharedCategoryName} 공유 목록에서 ${added}개를 가져왔어요.`

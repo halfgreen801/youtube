@@ -185,6 +185,42 @@
             </select>
           </div>
 
+          <section class="pagination-panel" id="paginationPanel" aria-label="목록 페이지 이동">
+            <div class="pagination-summary" id="paginationSummary">
+              전체 0개 중 0-0개 표시
+            </div>
+
+            <label class="page-size-field">
+              <span>표시 줄 수</span>
+              <select id="pageSizeSelect">
+                <option value="10">10개</option>
+                <option value="20">20개</option>
+                <option value="30">30개</option>
+                <option value="50">50개</option>
+                <option value="100">100개</option>
+              </select>
+            </label>
+
+            <div class="pagination-controls">
+              <button class="secondary-button" id="firstPageButton" type="button" aria-label="첫 페이지로 이동">처음</button>
+              <button class="secondary-button" id="prevPageButton" type="button" aria-label="이전 페이지로 이동">이전</button>
+
+              <div class="page-number-list" id="pageNumberList" aria-label="페이지 번호"></div>
+
+              <button class="secondary-button" id="nextPageButton" type="button" aria-label="다음 페이지로 이동">다음</button>
+              <button class="secondary-button" id="lastPageButton" type="button" aria-label="마지막 페이지로 이동">끝</button>
+            </div>
+
+            <form class="page-jump-form" id="pageJumpForm">
+              <label for="pageJumpInput">
+                <span>페이지 이동</span>
+                <input id="pageJumpInput" type="number" min="1" inputmode="numeric">
+              </label>
+              <span id="pageTotalText">/ 1</span>
+              <button class="primary-button" id="pageJumpButton" type="submit">이동</button>
+            </form>
+          </section>
+
           <section class="player-panel" id="playerPanel" hidden aria-label="재생">
             <div class="player-heading">
               <div>
