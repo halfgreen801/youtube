@@ -173,7 +173,8 @@ img {
 .install-dialog,
 .theme-dialog,
 .share-dialog,
-.migration-dialog {
+.migration-dialog,
+.category-delete-dialog {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -244,7 +245,8 @@ p {
 .theme-dialog form,
 .share-dialog form,
 .migration-dialog form,
-.category-dialog form {
+.category-dialog form,
+.category-delete-dialog form {
   display: grid;
   gap: 12px;
 }
@@ -361,8 +363,22 @@ label.import-button:focus-within {
 }
 
 .danger-button {
-  color: #3a1d1d;
-  background: var(--red);
+  min-height: 40px;
+  border: 1px solid color-mix(in srgb, var(--red) 55%, var(--line));
+  border-radius: 999px;
+  padding: 0 14px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--red) 14%, var(--surface));
+  cursor: pointer;
+}
+
+.danger-button:hover {
+  background: color-mix(in srgb, var(--red) 22%, var(--surface));
+}
+
+.danger-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .icon-button,
@@ -817,7 +833,8 @@ label.import-button:focus-within {
 .theme-dialog,
 .share-dialog,
 .migration-dialog,
-.category-dialog {
+.category-dialog,
+.category-delete-dialog {
   width: min(560px, calc(100vw - 28px));
   padding: 18px;
 }
@@ -826,12 +843,17 @@ label.import-button:focus-within {
   width: min(620px, calc(100vw - 28px));
 }
 
+.category-delete-dialog {
+  width: min(620px, calc(100vw - 28px));
+}
+
 .edit-dialog::backdrop,
 .install-dialog::backdrop,
 .theme-dialog::backdrop,
 .share-dialog::backdrop,
 .migration-dialog::backdrop,
-.category-dialog::backdrop {
+.category-dialog::backdrop,
+.category-delete-dialog::backdrop {
   background: rgba(13, 21, 20, 0.48);
   backdrop-filter: blur(5px);
 }
@@ -1081,6 +1103,12 @@ label.import-button:focus-within {
   background: var(--surface-strong);
 }
 
+.category-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .category-name-field {
   min-width: 0;
 }
@@ -1112,6 +1140,84 @@ label.import-button:focus-within {
 
 .category-manage-actions {
   grid-template-columns: 1fr auto;
+}
+
+.delete-target-box {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  color: var(--ink);
+  background: var(--surface-strong);
+}
+
+.delete-target-box strong,
+.delete-target-box span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.delete-target-box span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.delete-options {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.delete-options legend {
+  padding: 0 6px;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.radio-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.radio-line input[type="radio"] {
+  flex: 0 0 auto;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  accent-color: var(--accent-dark);
+}
+
+.radio-line span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.danger-radio {
+  color: color-mix(in srgb, var(--red) 76%, var(--ink));
+}
+
+.danger-note {
+  color: color-mix(in srgb, var(--red) 80%, var(--ink));
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.confirm-text-field,
+.move-target-field {
+  min-width: 0;
 }
 
 .update-banner {
@@ -1294,7 +1400,8 @@ label.import-button:focus-within {
   .theme-dialog,
   .share-dialog,
   .migration-dialog,
-  .category-dialog {
+  .category-dialog,
+  .category-delete-dialog {
     position: fixed;
     inset: auto 0 0 0;
     width: auto;
@@ -1311,7 +1418,8 @@ label.import-button:focus-within {
   .theme-dialog form,
   .share-dialog form,
   .migration-dialog form,
-  .category-dialog form {
+  .category-dialog form,
+  .category-delete-dialog form {
     gap: 11px;
   }
 
@@ -1337,6 +1445,14 @@ label.import-button:focus-within {
   .category-manage-row,
   .category-manage-actions {
     grid-template-columns: 1fr;
+  }
+
+  .category-row-actions {
+    width: 100%;
+  }
+
+  .category-row-actions button {
+    flex: 1;
   }
 
   .update-banner {

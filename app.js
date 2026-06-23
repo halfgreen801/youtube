@@ -1,5 +1,5 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.06.23.5";
+const APP_VERSION = "2026.06.23.6";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
@@ -12,6 +12,7 @@ const DEFAULT_CATEGORY_NAME = "기본";
 const DEFAULT_SLOT = "기본";
 const SYNC_META_KEY = "tubeVaultSyncMeta";
 const CLOUD_BACKUP_PREFIX = "tubeVaultBackupBeforeCloudPull:";
+const CATEGORY_DELETE_BACKUP_PREFIX = "gaegolTubeBeforeCategoryDelete:";
 const SUPABASE_TABLE = "tube_vault_states";
 const SYNC_DEBOUNCE_MS = 1200;
 const DEFAULT_THEME = {
@@ -86,6 +87,7 @@ let pageSize = loadPageSize();
 let draftTheme = { ...currentTheme };
 let themeDialogSaved = false;
 let syncMeta = loadSyncMeta();
+let pendingDeleteCategoryId = null;
 const syncState = {
   client: null,
   session: null,
@@ -150,6 +152,20 @@ const els = {
   categoryManageDialog: $("#categoryManageDialog"),
   categoryManageForm: $("#categoryManageForm"),
   categoryManageList: $("#categoryManageList"),
+  categoryDeleteDialog: $("#categoryDeleteDialog"),
+  categoryDeleteForm: $("#categoryDeleteForm"),
+  categoryDeleteDescription: $("#categoryDeleteDescription"),
+  deleteCategoryName: $("#deleteCategoryName"),
+  deleteCategoryItemCount: $("#deleteCategoryItemCount"),
+  deleteCategoryOptions: $("#deleteCategoryOptions"),
+  deleteMoveTargetSelect: $("#deleteMoveTargetSelect"),
+  deleteModeMove: $("#deleteModeMove"),
+  deleteModeDeleteItems: $("#deleteModeDeleteItems"),
+  moveTargetField: $("#moveTargetField"),
+  deleteCategoryDangerNote: $("#deleteCategoryDangerNote"),
+  deleteConfirmTextField: $("#deleteConfirmTextField"),
+  deleteConfirmTextInput: $("#deleteConfirmTextInput"),
+  confirmDeleteCategoryButton: $("#confirmDeleteCategoryButton"),
   migrationButton: $("#migrationButton"),
   migrationDialog: $("#migrationDialog"),
   migrationForm: $("#migrationForm"),
@@ -280,6 +296,10 @@ function bindEvents() {
   els.categoryManageButton.addEventListener("click", openCategoryManageDialog);
   els.categoryManageForm.addEventListener("submit", handleCategoryManageSubmit);
   els.categoryManageList.addEventListener("click", handleCategoryManageAction);
+  els.categoryDeleteForm.addEventListener("submit", handleCategoryDeleteSubmit);
+  els.deleteModeMove.addEventListener("change", updateDeleteCategoryModeUI);
+  els.deleteModeDeleteItems.addEventListener("change", updateDeleteCategoryModeUI);
+  els.deleteConfirmTextInput.addEventListener("input", updateDeleteCategoryModeUI);
   els.migrationButton.addEventListener("click", openMigrationDialog);
   els.migrationForm.addEventListener("submit", handleMigrationSubmit);
   els.migrationBackupButton.addEventListener("click", exportMigrationBackup);
@@ -1781,6 +1801,8 @@ function handleCategoryManageSubmit(event) {
 function renderCategoryManageList() {
   els.categoryManageList.innerHTML = "";
   state.categories.forEach((category) => {
+    const itemCount = getItemsByCategoryId(category.id).length;
+    const deleteState = canDeleteCategory(category.id);
     const row = document.createElement("div");
     row.className = "category-manage-row";
     row.dataset.categoryId = category.id;
@@ -1798,7 +1820,7 @@ function renderCategoryManageList() {
 
     const count = document.createElement("span");
     count.className = "category-count";
-    count.textContent = `${getItemsByCategory(category.id).length}개`;
+    count.textContent = `${itemCount}개`;
 
     const saveButton = document.createElement("button");
     saveButton.type = "button";
@@ -1806,16 +1828,43 @@ function renderCategoryManageList() {
     saveButton.dataset.action = "rename-category";
     saveButton.textContent = "이름 저장";
 
-    row.append(label, count, saveButton);
+    const actions = document.createElement("div");
+    actions.className = "category-row-actions";
+    actions.append(saveButton);
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "danger-button";
+    deleteButton.dataset.action = "delete-category";
+    deleteButton.textContent = "삭제";
+    deleteButton.setAttribute("aria-label", `${category.name} 카테고리 삭제`);
+    if (!deleteState.ok) {
+      deleteButton.disabled = true;
+      deleteButton.title = deleteState.reason === "default-category"
+        ? "기본 카테고리는 삭제할 수 없습니다."
+        : "마지막 카테고리는 삭제할 수 없습니다.";
+    }
+    actions.append(deleteButton);
+
+    row.append(label, count, actions);
     els.categoryManageList.append(row);
   });
 }
 
 function handleCategoryManageAction(event) {
-  const button = event.target.closest("[data-action='rename-category']");
+  const button = event.target.closest("[data-action]");
   if (!button) return;
   const row = button.closest(".category-manage-row");
-  if (row) renameCategoryFromRow(row);
+  if (!row) return;
+
+  if (button.dataset.action === "rename-category") {
+    renameCategoryFromRow(row);
+    return;
+  }
+
+  if (button.dataset.action === "delete-category") {
+    openDeleteCategoryDialog(row.dataset.categoryId);
+  }
 }
 
 function renameCategoryFromRow(row) {
@@ -1847,6 +1896,217 @@ function renameCategoryFromRow(row) {
   persistAndRender();
   renderCategoryManageList();
   showToast("카테고리 이름을 수정했어요.");
+}
+
+function getItemsByCategoryId(categoryId) {
+  return state.items.filter((item) => item.categoryId === categoryId);
+}
+
+function canDeleteCategory(categoryId) {
+  const category = getCategory(categoryId);
+  if (!category) return { ok: false, reason: "missing-category" };
+  if (category.id === DEFAULT_CATEGORY_ID) return { ok: false, reason: "default-category" };
+  if (state.categories.length <= 1) return { ok: false, reason: "last-category" };
+  return { ok: true };
+}
+
+function cloneStateForBackup() {
+  if (typeof structuredClone === "function") return structuredClone(state);
+  return JSON.parse(JSON.stringify(state));
+}
+
+function createLocalBackupBeforeCategoryDelete(categoryId) {
+  const category = getCategory(categoryId);
+  const createdAt = new Date().toISOString();
+  localStorage.setItem(`${CATEGORY_DELETE_BACKUP_PREFIX}${createdAt}`, JSON.stringify({
+    reason: "category-delete",
+    categoryId,
+    categoryName: category?.name || "",
+    createdAt,
+    state: cloneStateForBackup()
+  }));
+}
+
+function openDeleteCategoryDialog(categoryId) {
+  const category = getCategory(categoryId);
+  if (!category) {
+    showToast("카테고리를 찾지 못했어요.");
+    return;
+  }
+
+  const deleteState = canDeleteCategory(categoryId);
+  if (!deleteState.ok) {
+    showToast(deleteState.reason === "default-category"
+      ? "기본 카테고리는 삭제할 수 없어요."
+      : "마지막 카테고리는 삭제할 수 없어요.");
+    return;
+  }
+
+  pendingDeleteCategoryId = categoryId;
+  const itemCount = getItemsByCategoryId(categoryId).length;
+  els.deleteCategoryName.textContent = category.name;
+  els.deleteCategoryItemCount.textContent = `${itemCount}개 항목`;
+  els.categoryDeleteDescription.textContent = itemCount === 0
+    ? "이 카테고리에는 항목이 없습니다. 삭제해도 영상 목록은 영향을 받지 않습니다."
+    : `이 카테고리에는 ${itemCount}개 항목이 있습니다. 항목을 다른 카테고리로 이동하거나 항목까지 함께 삭제할 수 있습니다.`;
+  els.deleteModeMove.checked = true;
+  els.deleteModeDeleteItems.checked = false;
+  els.deleteConfirmTextInput.value = "";
+  renderDeleteMoveTargets(categoryId);
+  updateDeleteCategoryModeUI();
+  openDialog(els.categoryDeleteDialog);
+}
+
+function closeDeleteCategoryDialog() {
+  pendingDeleteCategoryId = null;
+  closeDialog(els.categoryDeleteDialog);
+}
+
+function renderDeleteMoveTargets(categoryId) {
+  els.deleteMoveTargetSelect.innerHTML = "";
+  state.categories
+    .filter((category) => category.id !== categoryId)
+    .forEach((category) => {
+      const count = getItemsByCategoryId(category.id).length;
+      els.deleteMoveTargetSelect.add(new Option(`${category.name} (${count}개)`, category.id));
+    });
+}
+
+function updateDeleteCategoryModeUI() {
+  const categoryId = pendingDeleteCategoryId;
+  const itemCount = categoryId ? getItemsByCategoryId(categoryId).length : 0;
+  const hasItems = itemCount > 0;
+  const mode = els.deleteModeDeleteItems.checked ? "delete-items" : "move";
+  const hasMoveTarget = els.deleteMoveTargetSelect.options.length > 0;
+
+  els.deleteCategoryOptions.hidden = !hasItems;
+  els.moveTargetField.hidden = !hasItems || mode !== "move";
+  els.deleteConfirmTextField.hidden = !hasItems || mode !== "delete-items";
+
+  if (!hasItems) {
+    els.deleteCategoryDangerNote.textContent = "삭제 전에 자동 백업이 이 기기의 localStorage에 저장됩니다. 키는 gaegolTubeBeforeCategoryDelete:로 시작합니다.";
+    els.confirmDeleteCategoryButton.textContent = "카테고리 삭제";
+    els.confirmDeleteCategoryButton.disabled = false;
+    return;
+  }
+
+  if (mode === "move") {
+    els.deleteCategoryDangerNote.textContent = "삭제 전에 자동 백업이 이 기기의 localStorage에 저장됩니다. 키는 gaegolTubeBeforeCategoryDelete:로 시작합니다. 그래도 중요한 목록은 먼저 내보내기하는 것을 권장합니다.";
+    els.confirmDeleteCategoryButton.textContent = "카테고리 삭제 및 항목 이동";
+    els.confirmDeleteCategoryButton.disabled = !hasMoveTarget;
+    return;
+  }
+
+  els.deleteCategoryDangerNote.textContent = "항목까지 삭제하면 목록에서 영상이 제거됩니다. 삭제 전 자동 백업은 만들지만, 신중하게 선택하세요.";
+  els.confirmDeleteCategoryButton.textContent = "카테고리와 항목 삭제";
+  els.confirmDeleteCategoryButton.disabled = els.deleteConfirmTextInput.value.trim() !== "삭제";
+}
+
+function handleCategoryDeleteSubmit(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    closeDeleteCategoryDialog();
+    return;
+  }
+
+  if (event.submitter?.value === "delete") {
+    confirmDeleteCategory();
+  }
+}
+
+function confirmDeleteCategory() {
+  const categoryId = pendingDeleteCategoryId;
+  const category = getCategory(categoryId);
+  if (!category) {
+    closeDeleteCategoryDialog();
+    showToast("카테고리를 찾지 못했어요.");
+    return;
+  }
+
+  const deleteState = canDeleteCategory(categoryId);
+  if (!deleteState.ok) {
+    showToast(deleteState.reason === "default-category"
+      ? "기본 카테고리는 삭제할 수 없어요."
+      : "마지막 카테고리는 삭제할 수 없어요.");
+    return;
+  }
+
+  const items = getItemsByCategoryId(categoryId);
+  const itemCount = items.length;
+  const mode = els.deleteModeDeleteItems.checked ? "delete-items" : "move";
+
+  if (itemCount === 0) {
+    createLocalBackupBeforeCategoryDelete(categoryId);
+    removeCategoryById(categoryId);
+    repairCategoryReferencesAfterDelete(categoryId);
+    closeDeleteCategoryDialog();
+    persistAndRender();
+    renderCategoryManageList();
+    showToast("카테고리를 삭제했어요.");
+    return;
+  }
+
+  if (mode === "move") {
+    const targetCategoryId = els.deleteMoveTargetSelect.value;
+    const targetCategory = getCategory(targetCategoryId);
+    if (!targetCategory || targetCategoryId === categoryId) {
+      showToast("이동할 카테고리를 선택하세요.");
+      return;
+    }
+
+    createLocalBackupBeforeCategoryDelete(categoryId);
+    items.forEach((item) => {
+      const slot = item.slot || DEFAULT_SLOT;
+      ensureCategorySlot(targetCategoryId, slot);
+      item.categoryId = targetCategoryId;
+      item.slot = slot;
+      item.updatedAt = new Date().toISOString();
+    });
+    removeCategoryById(categoryId);
+    repairCategoryReferencesAfterDelete(categoryId, targetCategoryId);
+    closeDeleteCategoryDialog();
+    persistAndRender();
+    renderCategoryManageList();
+    showToast(`카테고리를 삭제하고 ${itemCount}개 항목을 이동했어요.`);
+    return;
+  }
+
+  if (els.deleteConfirmTextInput.value.trim() !== "삭제") {
+    updateDeleteCategoryModeUI();
+    return;
+  }
+
+  const ok = window.confirm(`정말 ${category.name} 카테고리와 ${itemCount}개 항목을 모두 삭제할까요? 삭제 전 백업은 만들었지만 화면에서는 제거됩니다.`);
+  if (!ok) return;
+
+  createLocalBackupBeforeCategoryDelete(categoryId);
+  state.items = state.items.filter((item) => item.categoryId !== categoryId);
+  removeCategoryById(categoryId);
+  repairCategoryReferencesAfterDelete(categoryId);
+  closeDeleteCategoryDialog();
+  persistAndRender(true, { allowEmptyOverwrite: true });
+  renderCategoryManageList();
+  showToast(`카테고리와 ${itemCount}개 항목을 삭제했어요.`);
+}
+
+function removeCategoryById(categoryId) {
+  state.categories = state.categories.filter((category) => category.id !== categoryId);
+  if (!state.categories.length) state.categories.push(createDefaultCategory());
+}
+
+function repairCategoryReferencesAfterDelete(deletedCategoryId, preferredCategoryId = "") {
+  const fallbackCategory = getCategory(preferredCategoryId) || getDefaultCategory();
+  if (state.categoryFilter === deletedCategoryId) state.categoryFilter = "all";
+  if (els.categoryInput.value === deletedCategoryId) els.categoryInput.value = fallbackCategory.id;
+  if (els.editCategory.value === deletedCategoryId) els.editCategory.value = fallbackCategory.id;
+  if (els.shareCategorySelect.value === deletedCategoryId) renderCategoryShareOptions();
+  renderSaveCategoryOptions();
+  renderEditCategoryOptions();
+  renderSlotOptions(els.categoryInput, els.slotInput);
+  renderSlotOptions(els.editCategory, els.editSlot);
+  renderCategoryShareOptions();
+  updateCategoryShareCount();
+  currentPage = clampPage(currentPage, getTotalPages(getFilteredItems().length));
 }
 
 function openMigrationDialog() {
@@ -1938,7 +2198,7 @@ function renderCategoryShareOptions() {
 }
 
 function getItemsByCategory(categoryId) {
-  return state.items.filter((item) => item.categoryId === categoryId);
+  return getItemsByCategoryId(categoryId);
 }
 
 function updateCategoryShareCount() {

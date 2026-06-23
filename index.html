@@ -334,6 +334,58 @@
       </form>
     </dialog>
 
+    <dialog class="category-delete-dialog" id="categoryDeleteDialog">
+      <form method="dialog" id="categoryDeleteForm">
+        <div class="dialog-heading">
+          <h2>카테고리 삭제</h2>
+          <button class="icon-button" value="cancel" type="submit" aria-label="닫기" title="닫기">×</button>
+        </div>
+
+        <p class="dialog-description" id="categoryDeleteDescription">
+          카테고리를 삭제하기 전에 항목 처리 방식을 선택하세요.
+        </p>
+
+        <div class="delete-target-box">
+          <strong id="deleteCategoryName">카테고리명</strong>
+          <span id="deleteCategoryItemCount">0개 항목</span>
+        </div>
+
+        <fieldset class="delete-options" id="deleteCategoryOptions">
+          <legend>항목 처리 방식</legend>
+
+          <label class="radio-line">
+            <input type="radio" name="deleteCategoryMode" id="deleteModeMove" value="move" checked>
+            <span>항목을 다른 카테고리로 이동</span>
+          </label>
+
+          <label class="field move-target-field" id="moveTargetField">
+            <span>이동할 카테고리</span>
+            <select id="deleteMoveTargetSelect"></select>
+          </label>
+
+          <label class="radio-line danger-radio">
+            <input type="radio" name="deleteCategoryMode" id="deleteModeDeleteItems" value="delete-items">
+            <span>카테고리와 안의 항목을 모두 삭제</span>
+          </label>
+        </fieldset>
+
+        <p class="danger-note" id="deleteCategoryDangerNote">
+          삭제 전에 자동 백업이 이 기기의 localStorage에 저장됩니다. 키는 gaegolTubeBeforeCategoryDelete:로 시작합니다. 그래도 중요한 목록은 먼저 내보내기하는 것을 권장합니다.
+        </p>
+
+        <label class="confirm-text-field" id="deleteConfirmTextField">
+          <span>항목까지 삭제하려면 아래에 ‘삭제’를 입력하세요.</span>
+          <input id="deleteConfirmTextInput" type="text" autocomplete="off" placeholder="삭제">
+        </label>
+
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel" type="submit">취소</button>
+          <span></span>
+          <button class="danger-button" id="confirmDeleteCategoryButton" type="submit" value="delete">카테고리 삭제</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="migration-dialog" id="migrationDialog">
       <form method="dialog" id="migrationForm">
         <div class="dialog-heading">
