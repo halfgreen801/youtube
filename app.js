@@ -1,4 +1,5 @@
 const APP_NAME = "개골튜브";
+const APP_VERSION = "2026.06.23.2";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const IMPORT_VERSION = 2;
@@ -74,6 +75,8 @@ applyTheme(currentTheme);
 let state = loadState();
 let toastTimer = 0;
 let deferredInstallPrompt = null;
+let waitingServiceWorker = null;
+let refreshingForServiceWorker = false;
 let draftTheme = { ...currentTheme };
 let themeDialogSaved = false;
 let syncMeta = loadSyncMeta();
@@ -109,6 +112,7 @@ const els = {
   sortInput: $("#sortInput"),
   videoGrid: $("#videoGrid"),
   emptyState: $("#emptyState"),
+  migrationEmptyNote: $("#migrationEmptyNote"),
   cardTemplate: $("#videoCardTemplate"),
   playerPanel: $("#playerPanel"),
   playerFrame: $("#playerFrame"),
@@ -121,6 +125,18 @@ const els = {
   installButton: $("#installButton"),
   installDialog: $("#installDialog"),
   themeButton: $("#themeButton"),
+  migrationButton: $("#migrationButton"),
+  migrationDialog: $("#migrationDialog"),
+  migrationForm: $("#migrationForm"),
+  migrationMode: $("#migrationMode"),
+  migrationOrigin: $("#migrationOrigin"),
+  migrationStorageKey: $("#migrationStorageKey"),
+  migrationItemCount: $("#migrationItemCount"),
+  migrationAppVersion: $("#migrationAppVersion"),
+  migrationWarning: $("#migrationWarning"),
+  migrationBackupButton: $("#migrationBackupButton"),
+  migrationImportButton: $("#migrationImportButton"),
+  migrationReloadButton: $("#migrationReloadButton"),
   categoryShareButton: $("#categoryShareButton"),
   categoryShareDialog: $("#categoryShareDialog"),
   categoryShareForm: $("#categoryShareForm"),
@@ -164,6 +180,8 @@ const els = {
   cloudPullButton: $("#cloudPullButton"),
   cloudPushButton: $("#cloudPushButton"),
   cloudMergeButton: $("#cloudMergeButton"),
+  updateBanner: $("#updateBanner"),
+  applyUpdateButton: $("#applyUpdateButton"),
   toast: $("#toast")
 };
 
@@ -212,6 +230,12 @@ function bindEvents() {
   els.closePlayerButton.addEventListener("click", closePlayer);
   els.exportButton.addEventListener("click", exportLibrary);
   els.importInput.addEventListener("change", importLibrary);
+  els.migrationButton.addEventListener("click", openMigrationDialog);
+  els.migrationForm.addEventListener("submit", handleMigrationSubmit);
+  els.migrationBackupButton.addEventListener("click", exportMigrationBackup);
+  els.migrationImportButton.addEventListener("click", openImportFromMigration);
+  els.migrationReloadButton.addEventListener("click", reloadForFreshVersion);
+  els.applyUpdateButton.addEventListener("click", applyWaitingServiceWorker);
   els.categoryShareButton.addEventListener("click", openCategoryShareDialog);
   els.shareCategorySelect.addEventListener("change", updateCategoryShareCount);
   els.categoryShareForm.addEventListener("submit", handleCategoryShareSubmit);
@@ -290,7 +314,24 @@ function configureInstallButton() {
 }
 
 function openInstallGuide() {
-  els.installDialog.showModal();
+  openDialog(els.installDialog);
+}
+
+function openDialog(dialog) {
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+    return;
+  }
+  dialog.setAttribute("open", "");
+}
+
+function closeDialog(dialog) {
+  if (typeof dialog.close === "function") {
+    dialog.close();
+    return;
+  }
+  dialog.removeAttribute("open");
+  dialog.dispatchEvent(new Event("close"));
 }
 
 function isIosLikeDevice() {
@@ -461,13 +502,13 @@ function openEditDialog(item) {
   renderSlotOptions(els.editCategory, els.editSlot, item.slot || DEFAULT_SLOT);
   els.editStatus.value = item.status || "queue";
   els.editNote.value = item.note || "";
-  els.editDialog.showModal();
+  openDialog(els.editDialog);
 }
 
 function saveEdit(event) {
   event.preventDefault();
   if (event.submitter?.value === "cancel") {
-    els.editDialog.close();
+    closeDialog(els.editDialog);
     return;
   }
 
@@ -485,7 +526,7 @@ function saveEdit(event) {
   item.note = els.editNote.value.trim();
   item.updatedAt = new Date().toISOString();
   ensureProfile(item.profile);
-  els.editDialog.close();
+  closeDialog(els.editDialog);
   persistAndRender();
   showToast("수정했어요.");
 }
@@ -497,8 +538,8 @@ function deleteEditingItem() {
   if (!ok) return;
   state.items = state.items.filter((entry) => entry.id !== item.id);
   if (state.selectedId === item.id) closePlayer();
-  els.editDialog.close();
-  persistAndRender();
+  closeDialog(els.editDialog);
+  persistAndRender(true, { allowEmptyOverwrite: true });
   showToast("삭제했어요.");
 }
 
@@ -571,6 +612,7 @@ function renderCards() {
   const items = getFilteredItems();
   els.videoGrid.innerHTML = "";
   els.emptyState.hidden = items.length > 0;
+  renderMigrationEmptyNote(items.length);
 
   items.forEach((item) => {
     const node = els.cardTemplate.content.firstElementChild.cloneNode(true);
@@ -603,6 +645,11 @@ function renderCards() {
     $(".open-button", node).href = item.url;
     els.videoGrid.append(node);
   });
+}
+
+function renderMigrationEmptyNote(visibleItemCount) {
+  const shouldShow = visibleItemCount === 0 && state.items.length === 0 && isIosLikeDevice();
+  els.migrationEmptyNote.hidden = !shouldShow;
 }
 
 function renderPlayer() {
@@ -749,7 +796,7 @@ function wireThemeSettings() {
     saveTheme(draftTheme);
     currentTheme = { ...draftTheme };
     themeDialogSaved = true;
-    els.themeDialog.close();
+    closeDialog(els.themeDialog);
     showToast("색상 설정을 저장했어요.");
   });
 
@@ -824,7 +871,7 @@ function openThemeDialog() {
   themeDialogSaved = false;
   draftTheme = { ...currentTheme };
   fillThemeInputs(draftTheme);
-  els.themeDialog.showModal();
+  openDialog(els.themeDialog);
 }
 
 function closeThemeDialog(saveChanges = false) {
@@ -834,7 +881,7 @@ function closeThemeDialog(saveChanges = false) {
     applyTheme(currentTheme);
     fillThemeInputs(currentTheme);
   }
-  els.themeDialog.close();
+  closeDialog(els.themeDialog);
 }
 
 function fillThemeInputs(theme) {
@@ -946,6 +993,8 @@ function renderSyncPanel() {
   const setupHint = "여러 기기 동기화를 사용하려면 Supabase 설정 후 로그인하세요.";
   const signedIn = Boolean(syncState.session);
   const lastSyncedAt = syncMeta.userId === syncState.session?.user?.id ? syncMeta.lastSyncedAt : "";
+  const cloudItemCount = getStateItemCount(syncState.cloudRow?.data);
+  const localItemCount = state.items.length;
   let badge = "이 기기에만 저장 중";
   let detail = setupHint;
 
@@ -967,6 +1016,10 @@ function renderSyncPanel() {
     detail = "Supabase 설정이 감지되었습니다. 로그인하면 이 계정의 데이터만 동기화됩니다.";
   }
 
+  if (signedIn && !syncState.needsCloudChoice) {
+    detail = `${detail} 여러 기기에서 자동으로 같은 목록을 보려면 로그인 동기화를 사용하세요. 단, 처음 로그인할 때는 목록이 있는 기기에서 먼저 현재 기기 데이터 업로드를 해야 합니다.`;
+  }
+
   if (!syncState.online) {
     detail = `${detail} 오프라인 상태라 로컬 저장만 진행됩니다.`;
   }
@@ -983,12 +1036,25 @@ function renderSyncPanel() {
   els.syncLoginButton.disabled = syncState.busy || !syncState.online;
   els.syncSignupButton.disabled = syncState.busy || !syncState.online;
   els.cloudChoicePanel.hidden = !signedIn || !syncState.needsCloudChoice;
-  els.cloudChoiceText.textContent = syncState.cloudRow
-    ? "이 계정에 클라우드 데이터가 있습니다. 로컬 데이터를 덮어쓰기 전 자동 백업을 만듭니다."
-    : "이 계정에는 아직 클라우드 데이터가 없습니다. 현재 기기 데이터를 업로드할 수 있습니다.";
-  els.cloudPullButton.disabled = !syncState.cloudRow || syncState.busy || !syncState.online;
+  els.cloudChoiceText.textContent = getCloudChoiceText(localItemCount, cloudItemCount);
+  els.cloudPullButton.disabled = !syncState.cloudRow
+    || (localItemCount > 0 && cloudItemCount === 0)
+    || syncState.busy
+    || !syncState.online;
   els.cloudMergeButton.disabled = !syncState.cloudRow || syncState.busy || !syncState.online;
-  els.cloudPushButton.disabled = syncState.busy || !syncState.online;
+  els.cloudPushButton.disabled = syncState.busy || !syncState.online || localItemCount === 0;
+}
+
+function getCloudChoiceText(localItemCount, cloudItemCount) {
+  if (!syncState.cloudRow) {
+    return "이 계정에는 아직 클라우드 데이터가 없습니다. 목록이 보이는 기기에서 현재 기기 데이터 업로드를 누르세요.";
+  }
+
+  if (localItemCount > 0 && cloudItemCount === 0) {
+    return "클라우드 데이터가 비어 있습니다. 현재 로컬 목록을 비우지 않도록 클라우드 불러오기는 막아두었습니다. 목록이 보이는 기기에서 현재 기기 데이터 업로드를 누르세요.";
+  }
+
+  return "이 계정에 클라우드 데이터가 있습니다. 로컬 데이터를 덮어쓰기 전 자동 백업을 만듭니다.";
 }
 
 async function handleSyncLogin(event) {
@@ -1083,8 +1149,8 @@ async function handleSyncNow() {
     }
 
     syncState.needsCloudChoice = false;
-    await upsertCloudState();
-    showToast("지금 동기화했어요.");
+    const saved = await upsertCloudState();
+    if (saved) showToast("지금 동기화했어요.");
   } catch (error) {
     setSyncError(error, "지금 동기화하지 못했습니다.");
   } finally {
@@ -1137,6 +1203,11 @@ async function pullCloudState() {
       return;
     }
 
+    if (state.items.length > 0 && getStateItemCount(row.data) === 0) {
+      showToast("클라우드가 비어 있어 현재 목록을 자동으로 비우지 않았어요. 목록이 있는 기기에서 업로드하세요.");
+      return;
+    }
+
     backupLocalState("cloud-pull");
     applyStateObject(row.data);
     syncState.needsCloudChoice = false;
@@ -1155,11 +1226,16 @@ async function pullCloudState() {
 async function pushLocalState() {
   if (!canSync()) return;
 
+  if (state.items.length === 0) {
+    showToast("현재 목록이 비어 있어 클라우드에 업로드하지 않았어요. 목록이 있는 기기에서 먼저 업로드하세요.");
+    return;
+  }
+
   setSyncBusy(true);
   try {
     syncState.needsCloudChoice = false;
-    await upsertCloudState();
-    showToast("현재 기기 데이터를 업로드했어요.");
+    const saved = await upsertCloudState();
+    if (saved) showToast("현재 기기 데이터를 업로드했어요.");
   } catch (error) {
     setSyncError(error, "현재 기기 데이터를 업로드하지 못했습니다.");
   } finally {
@@ -1175,8 +1251,8 @@ async function mergeCloudState() {
   try {
     const row = syncState.cloudRow || await fetchCloudState();
     if (!row) {
-      await upsertCloudState();
-      showToast("업로드할 클라우드 데이터를 만들었어요.");
+      const saved = await upsertCloudState();
+      if (saved) showToast("업로드할 클라우드 데이터를 만들었어요.");
       return;
     }
 
@@ -1206,6 +1282,12 @@ function scheduleCloudSave() {
 
 async function upsertCloudState({ silent = false } = {}) {
   if (!canSync() || syncState.needsCloudChoice) return false;
+  if (state.items.length === 0) {
+    if (!silent) {
+      showToast("현재 목록이 비어 있어 클라우드에 업로드하지 않았어요. 목록이 있는 기기에서 먼저 업로드하세요.");
+    }
+    return false;
+  }
 
   const userId = syncState.session.user.id;
   const updatedAt = new Date().toISOString();
@@ -1234,6 +1316,7 @@ async function upsertCloudState({ silent = false } = {}) {
 
 function shouldPromptForCloud(row) {
   if (!row) return false;
+  if (state.items.length > 0 && getStateItemCount(row.data) === 0) return true;
   if (syncMeta.userId !== syncState.session?.user?.id || !syncMeta.lastSyncedAt) return true;
   return new Date(row.updated_at).getTime() > new Date(syncMeta.lastSyncedAt).getTime() + 1000;
 }
@@ -1257,6 +1340,10 @@ function setSyncError(error, fallback) {
   syncState.errorMessage = error?.message || fallback;
   renderSyncPanel();
   showToast("동기화 실패. 로컬 저장은 유지되었습니다.");
+}
+
+function getStateItemCount(value) {
+  return Array.isArray(value?.items) ? value.items.length : 0;
 }
 
 function serializeStateForCloud() {
@@ -1368,7 +1455,14 @@ function formatSyncTime(value) {
 }
 
 function exportLibrary() {
-  const payload = {
+  const payload = buildFullExportPayload();
+  const date = new Date().toISOString().slice(0, 10);
+  downloadJsonFile(payload, `gaegol-tube-${date}.json`);
+  showToast("내보내기 파일을 만들었어요.");
+}
+
+function buildFullExportPayload() {
+  return {
     version: IMPORT_VERSION,
     exportedAt: new Date().toISOString(),
     app: APP_NAME,
@@ -1376,17 +1470,84 @@ function exportLibrary() {
     categories: state.categories,
     items: state.items
   };
+}
+
+function downloadJsonFile(payload, fileName) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  const date = new Date().toISOString().slice(0, 10);
   link.href = url;
-  link.download = `gaegol-tube-${date}.json`;
+  link.download = fileName;
   document.body.append(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
-  showToast("내보내기 파일을 만들었어요.");
+}
+
+function openMigrationDialog() {
+  renderMigrationDialog();
+  openDialog(els.migrationDialog);
+}
+
+function renderMigrationDialog() {
+  if (state.items.length === 0 && getStoredItemCount() > 0) {
+    state = loadState();
+    ensureLibraryShape();
+    render();
+  }
+
+  const count = state.items.length;
+  els.migrationMode.textContent = isStandaloneMode() ? "홈 화면 앱 모드" : "브라우저 탭 모드";
+  els.migrationOrigin.textContent = window.location.origin;
+  els.migrationStorageKey.textContent = STORAGE_KEY;
+  els.migrationItemCount.textContent = `${count}개`;
+  els.migrationAppVersion.textContent = APP_VERSION;
+  els.migrationBackupButton.disabled = count === 0;
+  els.migrationWarning.textContent = count === 0
+    ? "현재 실행공간에는 백업할 목록이 없습니다."
+    : "목록이 보이는 실행공간에서 백업 파일을 만든 뒤, 목록이 없는 쪽에서 가져오기를 하세요.";
+}
+
+function handleMigrationSubmit(event) {
+  event.preventDefault();
+  closeDialog(els.migrationDialog);
+}
+
+function exportMigrationBackup() {
+  if (!state.items.length) {
+    showToast("현재 실행공간에는 백업할 목록이 없습니다.");
+    renderMigrationDialog();
+    return;
+  }
+
+  const date = new Date().toISOString().slice(0, 10);
+  downloadJsonFile(buildFullExportPayload(), `gaegol-tube-migration-${date}.json`);
+  showToast("데이터 이전용 백업 파일을 만들었어요.");
+}
+
+function openImportFromMigration() {
+  closeDialog(els.migrationDialog);
+  els.importInput.click();
+}
+
+async function reloadForFreshVersion() {
+  els.migrationReloadButton.disabled = true;
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration?.();
+    if (registration) {
+      await registration.update();
+      if (registration.waiting) {
+        promptForServiceWorkerUpdate(registration);
+        applyWaitingServiceWorker();
+        return;
+      }
+    }
+  } catch {
+    // Reload still helps when the browser cannot complete an update check.
+  } finally {
+    els.migrationReloadButton.disabled = false;
+  }
+  window.location.reload();
 }
 
 function openCategoryShareDialog() {
@@ -1400,7 +1561,7 @@ function openCategoryShareDialog() {
   if (preferred) els.shareCategorySelect.value = preferred;
   updateCategoryShareCount();
   configureNativeShareButton();
-  els.categoryShareDialog.showModal();
+  openDialog(els.categoryShareDialog);
 }
 
 function renderCategoryShareOptions() {
@@ -1430,7 +1591,7 @@ function updateCategoryShareCount() {
 function handleCategoryShareSubmit(event) {
   event.preventDefault();
   if (event.submitter?.value === "cancel") {
-    els.categoryShareDialog.close();
+    closeDialog(els.categoryShareDialog);
     return;
   }
   downloadCategoryShare();
@@ -1852,16 +2013,38 @@ function createId(seed) {
   return `${seed}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function persistAndRender(show = true) {
-  persist();
+function persistAndRender(show = true, options = {}) {
+  const saved = persist(options);
+  if (!saved) {
+    state = loadState();
+    ensureLibraryShape();
+  }
   render();
   if (show) requestAnimationFrame(() => {});
 }
 
-function persist() {
+function persist({ allowEmptyOverwrite = false } = {}) {
   state.version = IMPORT_VERSION;
+  if (!allowEmptyOverwrite && shouldBlockEmptyOverwrite()) {
+    showToast("기존 목록을 빈 목록으로 덮어쓰지 않도록 저장을 중단했어요. 데이터 이전에서 백업을 확인하세요.");
+    return false;
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   scheduleCloudSave();
+  return true;
+}
+
+function shouldBlockEmptyOverwrite() {
+  return state.items.length === 0 && getStoredItemCount() > 0;
+}
+
+function getStoredItemCount() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    return Array.isArray(stored?.items) ? stored.items.length : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function loadState() {
@@ -1889,7 +2072,45 @@ function showToast(message) {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshingForServiceWorker) return;
+    refreshingForServiceWorker = true;
+    window.location.reload();
   });
+
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js")
+      .then((registration) => {
+        registration.update().catch(() => {});
+        if (registration.waiting) promptForServiceWorkerUpdate(registration);
+
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          if (!worker) return;
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) {
+              promptForServiceWorkerUpdate(registration);
+            }
+          });
+        });
+      })
+      .catch(() => {});
+  });
+}
+
+function promptForServiceWorkerUpdate(registration) {
+  waitingServiceWorker = registration.waiting;
+  if (!waitingServiceWorker) return;
+  els.updateBanner.hidden = false;
+  showToast("새 버전을 사용할 수 있어요. 새 버전 적용을 눌러 주세요.");
+}
+
+function applyWaitingServiceWorker() {
+  if (!waitingServiceWorker) {
+    window.location.reload();
+    return;
+  }
+
+  els.updateBanner.hidden = true;
+  waitingServiceWorker.postMessage({ type: "SKIP_WAITING" });
 }

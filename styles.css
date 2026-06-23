@@ -172,7 +172,8 @@ img {
 .edit-dialog,
 .install-dialog,
 .theme-dialog,
-.share-dialog {
+.share-dialog,
+.migration-dialog {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -241,7 +242,8 @@ p {
 .edit-dialog form,
 .install-dialog form,
 .theme-dialog form,
-.share-dialog form {
+.share-dialog form,
+.migration-dialog form {
   display: grid;
   gap: 12px;
 }
@@ -703,7 +705,8 @@ label.import-button:focus-within {
 .edit-dialog,
 .install-dialog,
 .theme-dialog,
-.share-dialog {
+.share-dialog,
+.migration-dialog {
   width: min(560px, calc(100vw - 28px));
   padding: 18px;
 }
@@ -711,7 +714,8 @@ label.import-button:focus-within {
 .edit-dialog::backdrop,
 .install-dialog::backdrop,
 .theme-dialog::backdrop,
-.share-dialog::backdrop {
+.share-dialog::backdrop,
+.migration-dialog::backdrop {
   background: rgba(13, 21, 20, 0.48);
   backdrop-filter: blur(5px);
 }
@@ -874,6 +878,105 @@ label.import-button:focus-within {
   line-height: 1.45;
 }
 
+.migration-empty-note {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--amber);
+  border-radius: var(--radius);
+  padding: 14px;
+  color: var(--ink);
+  background: var(--surface-strong);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.migration-empty-note[hidden] {
+  display: none;
+}
+
+.migration-empty-note strong {
+  font-size: 0.98rem;
+}
+
+.migration-info {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-strong);
+}
+
+.migration-info div {
+  display: grid;
+  grid-template-columns: minmax(104px, 0.42fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.migration-info dt,
+.migration-info dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.migration-info dt {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.migration-info dd {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.migration-warning {
+  min-height: 22px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.migration-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.update-banner {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, calc(env(safe-area-inset-bottom) + 14px));
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 28px));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 10px;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.update-banner[hidden] {
+  display: none;
+}
+
+.update-banner span {
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.update-banner .primary-button {
+  flex: 0 0 auto;
+}
+
 .toast {
   position: fixed;
   left: 50%;
@@ -993,7 +1096,8 @@ label.import-button:focus-within {
   .edit-dialog,
   .install-dialog,
   .theme-dialog,
-  .share-dialog {
+  .share-dialog,
+  .migration-dialog {
     position: fixed;
     inset: auto 0 0 0;
     width: auto;
@@ -1008,7 +1112,8 @@ label.import-button:focus-within {
   .edit-dialog form,
   .install-dialog form,
   .theme-dialog form,
-  .share-dialog form {
+  .share-dialog form,
+  .migration-dialog form {
     gap: 11px;
   }
 
@@ -1027,6 +1132,20 @@ label.import-button:focus-within {
 
   .share-actions {
     grid-template-columns: 1fr;
+  }
+
+  .migration-info div,
+  .migration-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .update-banner {
+    right: max(12px, env(safe-area-inset-right));
+    left: max(12px, env(safe-area-inset-left));
+    bottom: max(12px, calc(env(safe-area-inset-bottom) + 12px));
+    max-width: none;
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .sync-actions,
