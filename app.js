@@ -118,6 +118,7 @@ const els = {
   exportButton: $("#exportButton"),
   importInput: $("#importInput"),
   installButton: $("#installButton"),
+  installDialog: $("#installDialog"),
   themeButton: $("#themeButton"),
   themeDialog: $("#themeDialog"),
   themeForm: $("#themeForm"),
@@ -231,17 +232,61 @@ function bindEvents() {
 
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
+    if (isStandaloneMode()) return;
     deferredInstallPrompt = event;
+    els.installButton.textContent = "앱 설치";
+    els.installButton.title = "홈 화면/앱 목록에 추가합니다. 데이터 동기화 기능은 아닙니다.";
+    els.installButton.setAttribute("aria-label", "홈 화면이나 앱 목록에 추가합니다. 데이터 동기화 기능은 아닙니다.");
     els.installButton.hidden = false;
   });
 
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    els.installButton.hidden = true;
+  });
+
   els.installButton.addEventListener("click", async () => {
-    if (!deferredInstallPrompt) return;
+    if (!deferredInstallPrompt) {
+      openInstallGuide();
+      return;
+    }
     deferredInstallPrompt.prompt();
     await deferredInstallPrompt.userChoice;
     deferredInstallPrompt = null;
     els.installButton.hidden = true;
   });
+
+  configureInstallButton();
+}
+
+function configureInstallButton() {
+  if (isStandaloneMode()) {
+    els.installButton.hidden = true;
+    return;
+  }
+
+  if (isIosLikeDevice()) {
+    els.installButton.textContent = "앱 설치";
+    els.installButton.title = "iPhone/iPad에서는 Safari 공유 버튼에서 홈 화면에 추가를 선택해야 합니다. 데이터 동기화 기능은 아닙니다.";
+    els.installButton.setAttribute("aria-label", "아이폰 앱 설치 방법 보기. 홈 화면에 추가하는 기능이며 데이터 동기화 기능은 아닙니다.");
+    els.installButton.hidden = false;
+  }
+}
+
+function openInstallGuide() {
+  els.installDialog.showModal();
+}
+
+function isIosLikeDevice() {
+  const ua = navigator.userAgent || "";
+  const platform = navigator.platform || "";
+  return /iPad|iPhone|iPod/.test(ua)
+    || (platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isStandaloneMode() {
+  return window.matchMedia("(display-mode: standalone)").matches
+    || window.navigator.standalone === true;
 }
 
 function handleSave(event) {

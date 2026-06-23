@@ -170,6 +170,7 @@ img {
 .sync-panel,
 .player-panel,
 .edit-dialog,
+.install-dialog,
 .theme-dialog {
   min-width: 0;
   border: 1px solid var(--line);
@@ -237,6 +238,7 @@ p {
 
 .save-form,
 .edit-dialog form,
+.install-dialog form,
 .theme-dialog form {
   display: grid;
   gap: 12px;
@@ -697,12 +699,14 @@ label.import-button:focus-within {
 }
 
 .edit-dialog,
+.install-dialog,
 .theme-dialog {
   width: min(560px, calc(100vw - 28px));
   padding: 18px;
 }
 
 .edit-dialog::backdrop,
+.install-dialog::backdrop,
 .theme-dialog::backdrop {
   background: rgba(13, 21, 20, 0.48);
   backdrop-filter: blur(5px);
@@ -721,6 +725,31 @@ label.import-button:focus-within {
 .dialog-description {
   color: var(--muted);
   font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.install-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--ink);
+  font-size: 0.94rem;
+  line-height: 1.45;
+}
+
+.install-steps li::marker {
+  color: var(--accent-dark);
+  font-weight: 900;
+}
+
+.install-note {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  color: var(--muted);
+  background: var(--surface-strong);
+  font-size: 0.84rem;
   line-height: 1.45;
 }
 
@@ -895,6 +924,7 @@ label.import-button:focus-within {
   }
 
   .edit-dialog,
+  .install-dialog,
   .theme-dialog {
     position: fixed;
     inset: auto 0 0 0;
@@ -908,6 +938,7 @@ label.import-button:focus-within {
   }
 
   .edit-dialog form,
+  .install-dialog form,
   .theme-dialog form {
     gap: 11px;
   }
