@@ -1,12 +1,12 @@
 {
-  "name": "튜브서랍",
-  "short_name": "튜브서랍",
-  "description": "YouTube 계정과 분리해서 영상과 숏츠 링크를 저장하는 개인 보관함",
+  "name": "개골튜브",
+  "short_name": "개골튜브",
+  "description": "개골튜브는 YouTube 계정과 분리해서 영상과 숏츠 링크를 저장하는 개인 보관함입니다",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f3f6f5",
-  "theme_color": "#22312f",
+  "background_color": "#fff8f1",
+  "theme_color": "#4fa88f",
   "icons": [
     {
       "src": "icon-192.png",

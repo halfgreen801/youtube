@@ -1,18 +1,18 @@
 :root {
   color-scheme: light;
-  --bg: #f3f6f5;
+  --bg: #fff8f1;
   --surface: #ffffff;
-  --surface-strong: #f9fbfb;
-  --ink: #182322;
-  --muted: #62716f;
-  --line: #d8e0de;
-  --line-strong: #bdcbc8;
-  --accent: #2c7a68;
-  --accent-dark: #1f5c4e;
-  --blue: #3d6fc0;
-  --red: #c84f4b;
-  --amber: #b57b22;
-  --shadow: 0 18px 45px rgba(19, 33, 32, 0.08);
+  --surface-strong: #fff1f5;
+  --ink: #263238;
+  --muted: #6f7d85;
+  --line: #eadde7;
+  --line-strong: #d9c5d3;
+  --accent: #7bcfb2;
+  --accent-dark: #4fa88f;
+  --blue: #8fb7ff;
+  --red: #f08a8a;
+  --amber: #f6c177;
+  --shadow: 0 18px 45px rgba(120, 78, 92, 0.11);
   --radius: 8px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -32,7 +32,9 @@ body {
   margin: 0;
   color: var(--ink);
   background:
-    linear-gradient(180deg, rgba(44, 122, 104, 0.08), rgba(61, 111, 192, 0.04) 44%, transparent 82%),
+    radial-gradient(circle at 12% 0%, rgba(123, 207, 178, 0.22), transparent 34%),
+    radial-gradient(circle at 92% 8%, rgba(143, 183, 255, 0.2), transparent 32%),
+    linear-gradient(180deg, rgba(255, 241, 245, 0.9), rgba(255, 248, 241, 0.42) 48%, transparent 84%),
     var(--bg);
   overflow-x: hidden;
 }
@@ -82,7 +84,7 @@ img {
   gap: 20px;
   padding: 14px max(18px, env(safe-area-inset-right)) 14px max(18px, env(safe-area-inset-left));
   border-bottom: 1px solid rgba(216, 224, 222, 0.9);
-  background: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(18px);
 }
 
@@ -100,7 +102,7 @@ img {
   height: 42px;
   flex: 0 0 auto;
   border-radius: 8px;
-  box-shadow: 0 10px 22px rgba(44, 122, 104, 0.2);
+  box-shadow: 0 10px 22px rgba(79, 168, 143, 0.18);
 }
 
 .brand span {
@@ -133,6 +135,20 @@ img {
   gap: 8px;
 }
 
+.top-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.install-help {
+  flex: 1 1 100%;
+  max-width: 520px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: right;
+}
+
 .layout {
   display: grid;
   grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
@@ -153,11 +169,12 @@ img {
 .filter-panel,
 .sync-panel,
 .player-panel,
-.edit-dialog {
+.edit-dialog,
+.theme-dialog {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--surface);
   box-shadow: var(--shadow);
 }
 
@@ -219,7 +236,8 @@ p {
 }
 
 .save-form,
-.edit-dialog form {
+.edit-dialog form,
+.theme-dialog form {
   display: grid;
   gap: 12px;
 }
@@ -228,7 +246,7 @@ label,
 .select-label {
   display: grid;
   gap: 6px;
-  color: #35433f;
+  color: var(--ink);
   font-size: 0.84rem;
   font-weight: 700;
 }
@@ -242,7 +260,7 @@ select {
   border-radius: var(--radius);
   padding: 10px 11px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
   font-size: 1rem;
   outline: none;
   transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
@@ -256,13 +274,13 @@ input:focus,
 textarea:focus,
 select:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 4px rgba(44, 122, 104, 0.14);
+  box-shadow: 0 0 0 4px rgba(79, 168, 143, 0.18);
 }
 
 button:focus-visible,
 a:focus-visible,
 label.import-button:focus-within {
-  outline: 3px solid rgba(44, 122, 104, 0.32);
+  outline: 3px solid rgba(79, 168, 143, 0.32);
   outline-offset: 2px;
 }
 
@@ -300,7 +318,7 @@ label.import-button:focus-within {
 
 .primary-button {
   flex: 1;
-  color: #fff;
+  color: var(--ink);
   border-color: var(--accent-dark);
   background: var(--accent);
   font-weight: 800;
@@ -318,7 +336,7 @@ label.import-button:focus-within {
 .icon-button {
   color: var(--ink);
   border-color: var(--line);
-  background: #fff;
+  background: var(--surface);
 }
 
 .secondary-button:hover,
@@ -332,7 +350,7 @@ label.import-button:focus-within {
 }
 
 .danger-button {
-  color: #fff;
+  color: #3a1d1d;
   background: var(--red);
 }
 
@@ -375,7 +393,7 @@ label.import-button:focus-within {
 .filter-button.active,
 .slot-button.active,
 .tag-button.active {
-  color: #fff;
+  color: var(--ink);
   border-color: var(--accent-dark);
   background: var(--accent);
 }
@@ -409,9 +427,9 @@ label.import-button:focus-within {
 }
 
 .sync-badge {
-  color: #23423b;
-  border-color: #bfddd5;
-  background: #e8f4f1;
+  color: var(--ink);
+  border-color: var(--accent);
+  background: var(--surface-strong);
 }
 
 .sync-description,
@@ -450,7 +468,7 @@ label.import-button:focus-within {
 .sync-user {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: #35433f;
+  color: var(--ink);
   font-size: 0.84rem;
   font-weight: 800;
 }
@@ -533,7 +551,7 @@ label.import-button:focus-within {
   border-radius: var(--radius);
   color: var(--muted);
   text-align: center;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--surface);
 }
 
 .empty-state strong {
@@ -553,7 +571,7 @@ label.import-button:focus-within {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
-  box-shadow: 0 12px 30px rgba(19, 33, 32, 0.06);
+  box-shadow: 0 12px 30px rgba(120, 78, 92, 0.08);
 }
 
 .thumb-button {
@@ -616,27 +634,27 @@ label.import-button:focus-within {
 }
 
 .type-badge.short {
-  color: #fff;
-  border-color: #914541;
+  color: #3a1d1d;
+  border-color: var(--red);
   background: var(--red);
 }
 
 .type-badge.video {
-  color: #fff;
-  border-color: #224c85;
+  color: #1e3156;
+  border-color: var(--blue);
   background: var(--blue);
 }
 
 .category-badge {
-  color: #23423b;
-  border-color: #bfddd5;
-  background: #e8f4f1;
+  color: var(--ink);
+  border-color: var(--accent);
+  background: var(--surface-strong);
 }
 
 .slot-badge {
   color: #4d3f1c;
-  border-color: #ead8a8;
-  background: #fbf2d7;
+  border-color: var(--amber);
+  background: #fff6dc;
 }
 
 .card-title {
@@ -667,23 +685,25 @@ label.import-button:focus-within {
 }
 
 .favorite-button.active {
-  color: #fff;
-  border-color: #8e5f15;
+  color: #4d3211;
+  border-color: var(--amber);
   background: var(--amber);
 }
 
 .status-button.done {
-  color: #fff;
+  color: var(--ink);
   border-color: var(--accent-dark);
   background: var(--accent);
 }
 
-.edit-dialog {
+.edit-dialog,
+.theme-dialog {
   width: min(560px, calc(100vw - 28px));
   padding: 18px;
 }
 
-.edit-dialog::backdrop {
+.edit-dialog::backdrop,
+.theme-dialog::backdrop {
   background: rgba(13, 21, 20, 0.48);
   backdrop-filter: blur(5px);
 }
@@ -696,6 +716,66 @@ label.import-button:focus-within {
   display: grid;
   grid-template-columns: auto 1fr auto auto;
   margin-top: 4px;
+}
+
+.dialog-description {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.theme-field {
+  grid-template-columns: minmax(0, 1fr) 54px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface-strong);
+}
+
+.theme-field input[type="color"] {
+  width: 54px;
+  min-width: 54px;
+  height: 44px;
+  min-height: 44px;
+  padding: 3px;
+  cursor: pointer;
+}
+
+.theme-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  color: var(--ink);
+  background: var(--surface-strong);
+}
+
+.theme-preview span {
+  overflow: hidden;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-preview button {
+  min-height: 40px;
+  border: 1px solid var(--accent-dark);
+  border-radius: var(--radius);
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--accent);
 }
 
 .toast {
@@ -747,6 +827,12 @@ label.import-button:focus-within {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
     width: 100%;
+  }
+
+  .install-help {
+    grid-column: 1 / -1;
+    max-width: none;
+    text-align: left;
   }
 
   .top-actions .ghost-button,
@@ -808,7 +894,8 @@ label.import-button:focus-within {
     flex: 1;
   }
 
-  .edit-dialog {
+  .edit-dialog,
+  .theme-dialog {
     position: fixed;
     inset: auto 0 0 0;
     width: auto;
@@ -820,7 +907,8 @@ label.import-button:focus-within {
     border-radius: 16px 16px 0 0;
   }
 
-  .edit-dialog form {
+  .edit-dialog form,
+  .theme-dialog form {
     gap: 11px;
   }
 
@@ -840,6 +928,10 @@ label.import-button:focus-within {
   .sync-actions,
   .cloud-choice-actions {
     display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .theme-grid {
     grid-template-columns: 1fr;
   }
 }

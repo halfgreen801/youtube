@@ -1,4 +1,6 @@
+const APP_NAME = "개골튜브";
 const STORAGE_KEY = "tube-vault-state-v1";
+const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const IMPORT_VERSION = 2;
 const DEFAULT_CATEGORY_ID = "general";
 const DEFAULT_CATEGORY_NAME = "기본";
@@ -7,6 +9,34 @@ const SYNC_META_KEY = "tubeVaultSyncMeta";
 const CLOUD_BACKUP_PREFIX = "tubeVaultBackupBeforeCloudPull:";
 const SUPABASE_TABLE = "tube_vault_states";
 const SYNC_DEBOUNCE_MS = 1200;
+const DEFAULT_THEME = {
+  bg: "#fff8f1",
+  surface: "#ffffff",
+  surfaceStrong: "#fff1f5",
+  ink: "#263238",
+  muted: "#6f7d85",
+  line: "#eadde7",
+  lineStrong: "#d9c5d3",
+  accent: "#7bcfb2",
+  accentDark: "#4fa88f",
+  blue: "#8fb7ff",
+  red: "#f08a8a",
+  amber: "#f6c177"
+};
+const THEME_FIELDS = [
+  ["bg", "--bg"],
+  ["surface", "--surface"],
+  ["surfaceStrong", "--surface-strong"],
+  ["ink", "--ink"],
+  ["muted", "--muted"],
+  ["line", "--line"],
+  ["lineStrong", "--line-strong"],
+  ["accent", "--accent"],
+  ["accentDark", "--accent-dark"],
+  ["blue", "--blue"],
+  ["red", "--red"],
+  ["amber", "--amber"]
+];
 
 const syncConfig = {
   syncEnabled: false,
@@ -37,9 +67,14 @@ const initialState = {
   selectedId: null
 };
 
+let currentTheme = loadTheme();
+applyTheme(currentTheme);
+
 let state = loadState();
 let toastTimer = 0;
 let deferredInstallPrompt = null;
+let draftTheme = { ...currentTheme };
+let themeDialogSaved = false;
 let syncMeta = loadSyncMeta();
 const syncState = {
   client: null,
@@ -83,6 +118,11 @@ const els = {
   exportButton: $("#exportButton"),
   importInput: $("#importInput"),
   installButton: $("#installButton"),
+  themeButton: $("#themeButton"),
+  themeDialog: $("#themeDialog"),
+  themeForm: $("#themeForm"),
+  themeInputs: $$("[data-theme-key]"),
+  resetThemeButton: $("#resetThemeButton"),
   editDialog: $("#editDialog"),
   editForm: $("#editForm"),
   editId: $("#editId"),
@@ -120,6 +160,7 @@ function init() {
   ensureLibraryShape();
   ensureCategoryOptions();
   bindEvents();
+  wireThemeSettings();
   render();
   initSync();
   registerServiceWorker();
@@ -634,6 +675,124 @@ async function hydrateMissingTitles() {
       return;
     }
   }
+}
+
+function wireThemeSettings() {
+  els.themeButton.addEventListener("click", openThemeDialog);
+  els.themeForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (event.submitter?.value === "cancel") {
+      closeThemeDialog(false);
+      return;
+    }
+    saveTheme(draftTheme);
+    currentTheme = { ...draftTheme };
+    themeDialogSaved = true;
+    els.themeDialog.close();
+    showToast("색상 설정을 저장했어요.");
+  });
+
+  els.themeDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeThemeDialog(false);
+  });
+
+  els.themeDialog.addEventListener("close", () => {
+    if (!themeDialogSaved) {
+      draftTheme = { ...currentTheme };
+      applyTheme(currentTheme);
+      fillThemeInputs(currentTheme);
+    }
+  });
+
+  els.resetThemeButton.addEventListener("click", resetTheme);
+  els.themeInputs.forEach((input) => {
+    input.addEventListener("input", () => {
+      const key = input.dataset.themeKey;
+      if (!Object.prototype.hasOwnProperty.call(DEFAULT_THEME, key) || !isValidHexColor(input.value)) return;
+      draftTheme = {
+        ...draftTheme,
+        [key]: input.value
+      };
+      applyTheme(draftTheme);
+    });
+  });
+}
+
+function loadTheme() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(THEME_STORAGE_KEY));
+    if (!stored || typeof stored !== "object") return { ...DEFAULT_THEME };
+
+    const merged = { ...DEFAULT_THEME, ...stored };
+    const valid = THEME_FIELDS.every(([key]) => isValidHexColor(merged[key]));
+    if (!valid) {
+      localStorage.removeItem(THEME_STORAGE_KEY);
+      return { ...DEFAULT_THEME };
+    }
+    return merged;
+  } catch {
+    localStorage.removeItem(THEME_STORAGE_KEY);
+    return { ...DEFAULT_THEME };
+  }
+}
+
+function saveTheme(theme) {
+  const normalized = normalizeTheme(theme);
+  localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+function applyTheme(theme) {
+  const normalized = normalizeTheme(theme);
+  THEME_FIELDS.forEach(([key, variable]) => {
+    document.documentElement.style.setProperty(variable, normalized[key]);
+  });
+
+  const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+  if (metaThemeColor) metaThemeColor.setAttribute("content", normalized.accentDark || normalized.ink);
+}
+
+function resetTheme() {
+  draftTheme = { ...DEFAULT_THEME };
+  applyTheme(DEFAULT_THEME);
+  fillThemeInputs(DEFAULT_THEME);
+  showToast("기본 파스텔 색상을 미리 적용했어요. 저장해야 유지됩니다.");
+}
+
+function openThemeDialog() {
+  themeDialogSaved = false;
+  draftTheme = { ...currentTheme };
+  fillThemeInputs(draftTheme);
+  els.themeDialog.showModal();
+}
+
+function closeThemeDialog(saveChanges = false) {
+  themeDialogSaved = saveChanges;
+  if (!saveChanges) {
+    draftTheme = { ...currentTheme };
+    applyTheme(currentTheme);
+    fillThemeInputs(currentTheme);
+  }
+  els.themeDialog.close();
+}
+
+function fillThemeInputs(theme) {
+  els.themeInputs.forEach((input) => {
+    const key = input.dataset.themeKey;
+    input.value = isValidHexColor(theme[key]) ? theme[key] : DEFAULT_THEME[key];
+  });
+}
+
+function normalizeTheme(theme) {
+  const source = theme && typeof theme === "object" ? theme : {};
+  return THEME_FIELDS.reduce((result, [key]) => {
+    result[key] = isValidHexColor(source[key]) ? source[key] : DEFAULT_THEME[key];
+    return result;
+  }, {});
+}
+
+function isValidHexColor(value) {
+  return /^#[0-9a-fA-F]{6}$/.test(String(value || ""));
 }
 
 async function initSync() {
@@ -1151,7 +1310,7 @@ function exportLibrary() {
   const payload = {
     version: IMPORT_VERSION,
     exportedAt: new Date().toISOString(),
-    app: "튜브서랍",
+    app: APP_NAME,
     profiles: state.profiles,
     categories: state.categories,
     items: state.items
@@ -1161,7 +1320,7 @@ function exportLibrary() {
   const link = document.createElement("a");
   const date = new Date().toISOString().slice(0, 10);
   link.href = url;
-  link.download = `tube-vault-${date}.json`;
+  link.download = `gaegol-tube-${date}.json`;
   link.click();
   URL.revokeObjectURL(url);
   showToast("내보내기 파일을 만들었어요.");
