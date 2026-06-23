@@ -243,7 +243,8 @@ p {
 .install-dialog form,
 .theme-dialog form,
 .share-dialog form,
-.migration-dialog form {
+.migration-dialog form,
+.category-dialog form {
   display: grid;
   gap: 12px;
 }
@@ -706,16 +707,22 @@ label.import-button:focus-within {
 .install-dialog,
 .theme-dialog,
 .share-dialog,
-.migration-dialog {
+.migration-dialog,
+.category-dialog {
   width: min(560px, calc(100vw - 28px));
   padding: 18px;
+}
+
+.category-dialog {
+  width: min(620px, calc(100vw - 28px));
 }
 
 .edit-dialog::backdrop,
 .install-dialog::backdrop,
 .theme-dialog::backdrop,
 .share-dialog::backdrop,
-.migration-dialog::backdrop {
+.migration-dialog::backdrop,
+.category-dialog::backdrop {
   background: rgba(13, 21, 20, 0.48);
   backdrop-filter: blur(5px);
 }
@@ -945,6 +952,60 @@ label.import-button:focus-within {
   grid-template-columns: 1fr 1fr;
 }
 
+.category-manage-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(52dvh, 480px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.category-manage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-strong);
+}
+
+.category-name-field {
+  min-width: 0;
+}
+
+.category-name-field input {
+  min-height: 44px;
+}
+
+.category-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.84rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.auto-category-hint,
+.type-select-help {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.category-manage-actions {
+  grid-template-columns: auto 1fr auto;
+}
+
 .update-banner {
   position: fixed;
   right: max(16px, env(safe-area-inset-right));
@@ -1097,7 +1158,8 @@ label.import-button:focus-within {
   .install-dialog,
   .theme-dialog,
   .share-dialog,
-  .migration-dialog {
+  .migration-dialog,
+  .category-dialog {
     position: fixed;
     inset: auto 0 0 0;
     width: auto;
@@ -1113,7 +1175,8 @@ label.import-button:focus-within {
   .install-dialog form,
   .theme-dialog form,
   .share-dialog form,
-  .migration-dialog form {
+  .migration-dialog form,
+  .category-dialog form {
     gap: 11px;
   }
 
@@ -1135,7 +1198,9 @@ label.import-button:focus-within {
   }
 
   .migration-info div,
-  .migration-actions {
+  .migration-actions,
+  .category-manage-row,
+  .category-manage-actions {
     grid-template-columns: 1fr;
   }
 

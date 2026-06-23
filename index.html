@@ -24,6 +24,7 @@
         <div class="top-actions">
           <button class="ghost-button" id="installButton" type="button" title="홈 화면/앱 목록에 추가합니다. 데이터 동기화 기능은 아닙니다." aria-label="홈 화면이나 앱 목록에 추가합니다. 데이터 동기화 기능은 아닙니다." hidden>앱 설치</button>
           <button class="ghost-button" id="themeButton" type="button" title="앱 색상 설정" aria-label="앱 색상 설정 열기">색상 설정</button>
+          <button class="ghost-button" id="categoryManageButton" type="button" title="카테고리 이름을 수정합니다." aria-label="카테고리 관리 열기">카테고리 관리</button>
           <button class="ghost-button" id="categoryShareButton" type="button" title="선택한 카테고리의 목록만 JSON 파일로 내보냅니다." aria-label="선택한 카테고리의 목록만 JSON 파일로 내보내기">카테고리 공유</button>
           <button class="ghost-button" id="migrationButton" type="button" title="홈 화면 앱, Safari, 다른 기기 사이에서 목록을 옮깁니다." aria-label="데이터 이전 안내와 백업 기능 열기">데이터 이전</button>
           <button class="ghost-button" id="exportButton" type="button">내보내기</button>
@@ -59,6 +60,7 @@
                     <select id="categoryInput"></select>
                     <button class="icon-button" id="newCategoryButton" type="button" title="카테고리 추가" aria-label="카테고리 추가">+</button>
                   </div>
+                  <small class="auto-category-hint">자동 분류를 선택하면 /shorts/ 링크는 숏폼, watch 링크는 일반으로 저장됩니다.</small>
                 </label>
 
                 <label>
@@ -218,6 +220,14 @@
           </select>
         </label>
 
+        <label class="field">
+          <span>영상 유형</span>
+          <select id="editType">
+            <option value="video">일반 영상</option>
+            <option value="short">숏폼</option>
+          </select>
+        </label>
+
         <div class="form-grid">
           <label>
             카테고리
@@ -246,6 +256,31 @@
           <span></span>
           <button class="secondary-button" value="cancel" type="submit">취소</button>
           <button class="primary-button" id="saveEditButton" value="default" type="submit">저장</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="category-dialog" id="categoryManageDialog">
+      <form method="dialog" id="categoryManageForm">
+        <div class="dialog-heading">
+          <h2>카테고리 관리</h2>
+          <button class="icon-button" value="cancel" type="submit" aria-label="닫기" title="닫기">×</button>
+        </div>
+
+        <p class="dialog-description">
+          카테고리 이름을 바꿔도 저장된 영상 목록은 유지됩니다.
+        </p>
+
+        <div class="category-manage-list" id="categoryManageList"></div>
+
+        <p class="type-select-help">
+          기존 목록 정리는 실행 전에 이 기기에 백업을 남깁니다. 분류 칸은 그대로 유지합니다.
+        </p>
+
+        <div class="dialog-actions category-manage-actions">
+          <button class="secondary-button" id="classifyExistingButton" type="button">기존 목록 숏폼/일반으로 정리</button>
+          <span></span>
+          <button class="secondary-button" value="cancel" type="submit">닫기</button>
         </div>
       </form>
     </dialog>

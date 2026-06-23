@@ -1,9 +1,13 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.06.23.2";
+const APP_VERSION = "2026.06.23.3";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const IMPORT_VERSION = 2;
 const CATEGORY_SHARE_VERSION = 3;
+const AUTO_CATEGORY_VALUE = "__auto_type__";
+const TYPE_CATEGORY_SHORT_ID = "type-short";
+const TYPE_CATEGORY_VIDEO_ID = "type-video";
+const AUTO_CLASSIFY_BACKUP_PREFIX = "gaegolTubeBeforeAutoClassify:";
 const DEFAULT_CATEGORY_ID = "general";
 const DEFAULT_CATEGORY_NAME = "기본";
 const DEFAULT_SLOT = "기본";
@@ -125,6 +129,11 @@ const els = {
   installButton: $("#installButton"),
   installDialog: $("#installDialog"),
   themeButton: $("#themeButton"),
+  categoryManageButton: $("#categoryManageButton"),
+  categoryManageDialog: $("#categoryManageDialog"),
+  categoryManageForm: $("#categoryManageForm"),
+  categoryManageList: $("#categoryManageList"),
+  classifyExistingButton: $("#classifyExistingButton"),
   migrationButton: $("#migrationButton"),
   migrationDialog: $("#migrationDialog"),
   migrationForm: $("#migrationForm"),
@@ -161,6 +170,7 @@ const els = {
   newEditCategoryButton: $("#newEditCategoryButton"),
   newEditSlotButton: $("#newEditSlotButton"),
   editStatus: $("#editStatus"),
+  editType: $("#editType"),
   editNote: $("#editNote"),
   deleteButton: $("#deleteButton"),
   syncStatusBadge: $("#syncStatusBadge"),
@@ -230,6 +240,10 @@ function bindEvents() {
   els.closePlayerButton.addEventListener("click", closePlayer);
   els.exportButton.addEventListener("click", exportLibrary);
   els.importInput.addEventListener("change", importLibrary);
+  els.categoryManageButton.addEventListener("click", openCategoryManageDialog);
+  els.categoryManageForm.addEventListener("submit", handleCategoryManageSubmit);
+  els.categoryManageList.addEventListener("click", handleCategoryManageAction);
+  els.classifyExistingButton.addEventListener("click", classifyExistingByType);
   els.migrationButton.addEventListener("click", openMigrationDialog);
   els.migrationForm.addEventListener("submit", handleMigrationSubmit);
   els.migrationBackupButton.addEventListener("click", exportMigrationBackup);
@@ -357,8 +371,9 @@ function handleSave(event) {
 
   const now = new Date().toISOString();
   const profile = "나";
-  const category = getCategory(els.categoryInput.value) || getDefaultCategory();
-  const slot = ensureCategorySlot(category.id, els.slotInput.value);
+  const useAutoCategory = isAutoCategorySelected();
+  const manualCategory = useAutoCategory ? null : getCategory(els.categoryInput.value) || getDefaultCategory();
+  const manualSlot = manualCategory ? ensureCategorySlot(manualCategory.id, els.slotInput.value) : DEFAULT_SLOT;
   let added = 0;
   let skipped = 0;
 
@@ -368,6 +383,9 @@ function handleSave(event) {
       skipped += 1;
       return;
     }
+
+    const category = useAutoCategory ? getAutoCategoryForType(video.type) : manualCategory;
+    const slot = useAutoCategory ? DEFAULT_SLOT : manualSlot;
 
     state.items.unshift({
       id: createId(video.videoId),
@@ -399,13 +417,17 @@ function handleSave(event) {
 
   if (added > 0) {
     els.saveForm.reset();
-    els.categoryInput.value = category.id;
-    renderSlotOptions(els.categoryInput, els.slotInput, slot);
+    els.categoryInput.value = useAutoCategory ? AUTO_CATEGORY_VALUE : manualCategory.id;
+    renderSlotOptions(els.categoryInput, els.slotInput, useAutoCategory ? DEFAULT_SLOT : manualSlot);
   }
 
   const message = skipped
-    ? `${added}개 저장, ${skipped}개는 이미 있었어요.`
-    : `${added}개 저장했어요.`;
+    ? useAutoCategory
+      ? `${added}개 저장, ${skipped}개는 이미 있었어요. 숏폼/일반으로 자동 분류했어요.`
+      : `${added}개 저장, ${skipped}개는 이미 있었어요.`
+    : useAutoCategory
+      ? `${added}개 저장했어요. 숏폼/일반으로 자동 분류했어요.`
+      : `${added}개 저장했어요.`;
   showToast(message);
 }
 
@@ -476,6 +498,11 @@ function addCategory(target) {
 }
 
 function addSlot(target) {
+  if (target === "save" && isAutoCategorySelected()) {
+    showToast("자동 분류에서는 기본 칸을 사용합니다. 분류 칸을 추가하려면 카테고리를 직접 선택하세요.");
+    return;
+  }
+
   const categorySelect = target === "edit" ? els.editCategory : els.categoryInput;
   const slotSelect = target === "edit" ? els.editSlot : els.slotInput;
   const category = getCategory(categorySelect.value) || getDefaultCategory();
@@ -501,6 +528,7 @@ function openEditDialog(item) {
   els.editCategory.value = item.categoryId || DEFAULT_CATEGORY_ID;
   renderSlotOptions(els.editCategory, els.editSlot, item.slot || DEFAULT_SLOT);
   els.editStatus.value = item.status || "queue";
+  els.editType.value = item.type === "short" ? "short" : "video";
   els.editNote.value = item.note || "";
   openDialog(els.editDialog);
 }
@@ -517,10 +545,21 @@ function saveEdit(event) {
 
   const category = getCategory(els.editCategory.value) || getDefaultCategory();
   const slot = ensureCategorySlot(category.id, els.editSlot.value);
+  const nextType = els.editType.value === "short" ? "short" : "video";
+  const duplicate = state.items.some((entry) =>
+    entry.id !== item.id && entry.videoId === item.videoId && entry.type === nextType
+  );
+  if (duplicate) {
+    showToast("같은 유형의 같은 영상이 이미 있어요.");
+    return;
+  }
+
   item.title = els.editTitle.value.trim() || fallbackTitle(item);
   item.profile = item.profile || "나";
   item.categoryId = category.id;
   item.slot = slot;
+  item.type = nextType;
+  item.url = normalizeYoutubeItemUrl(item.videoId, nextType);
   item.status = els.editStatus.value;
   item.tags = Array.isArray(item.tags) ? item.tags : [];
   item.note = els.editNote.value.trim();
@@ -737,7 +776,6 @@ function parseYoutubeUrl(rawUrl) {
   const host = url.hostname.toLowerCase().replace(/^www\./, "").replace(/^m\./, "");
   const parts = url.pathname.split("/").filter(Boolean);
   let videoId = "";
-  let type = "video";
 
   if (host === "youtu.be") {
     videoId = parts[0] || "";
@@ -746,7 +784,6 @@ function parseYoutubeUrl(rawUrl) {
       videoId = url.searchParams.get("v") || "";
     } else if (parts[0] === "shorts") {
       videoId = parts[1] || "";
-      type = "short";
     } else if (parts[0] === "embed") {
       videoId = parts[1] || "";
     } else if (parts[0] === "live") {
@@ -757,13 +794,23 @@ function parseYoutubeUrl(rawUrl) {
   videoId = videoId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
 
+  const type = detectYoutubeType(url, parts);
+
   return {
     videoId,
     type,
-    url: type === "short"
-      ? `https://www.youtube.com/shorts/${videoId}`
-      : `https://www.youtube.com/watch?v=${videoId}`
+    url: normalizeYoutubeItemUrl(videoId, type)
   };
+}
+
+function detectYoutubeType(_url, parts) {
+  return parts[0] === "shorts" ? "short" : "video";
+}
+
+function normalizeYoutubeItemUrl(videoId, type) {
+  return type === "short"
+    ? `https://www.youtube.com/shorts/${videoId}`
+    : `https://www.youtube.com/watch?v=${videoId}`;
 }
 
 async function hydrateMissingTitles() {
@@ -1484,6 +1531,118 @@ function downloadJsonFile(payload, fileName) {
   URL.revokeObjectURL(url);
 }
 
+function openCategoryManageDialog() {
+  ensureLibraryShape();
+  renderCategoryManageList();
+  openDialog(els.categoryManageDialog);
+}
+
+function handleCategoryManageSubmit(event) {
+  event.preventDefault();
+  closeDialog(els.categoryManageDialog);
+}
+
+function renderCategoryManageList() {
+  els.categoryManageList.innerHTML = "";
+  state.categories.forEach((category) => {
+    const row = document.createElement("div");
+    row.className = "category-manage-row";
+    row.dataset.categoryId = category.id;
+
+    const label = document.createElement("label");
+    label.className = "category-name-field";
+    const labelText = document.createElement("span");
+    labelText.textContent = "카테고리 이름";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = category.name;
+    input.maxLength = 30;
+    input.autocomplete = "off";
+    label.append(labelText, input);
+
+    const count = document.createElement("span");
+    count.className = "category-count";
+    count.textContent = `${getItemsByCategory(category.id).length}개`;
+
+    const saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.className = "secondary-button";
+    saveButton.dataset.action = "rename-category";
+    saveButton.textContent = "이름 저장";
+
+    row.append(label, count, saveButton);
+    els.categoryManageList.append(row);
+  });
+}
+
+function handleCategoryManageAction(event) {
+  const button = event.target.closest("[data-action='rename-category']");
+  if (!button) return;
+  const row = button.closest(".category-manage-row");
+  if (row) renameCategoryFromRow(row);
+}
+
+function renameCategoryFromRow(row) {
+  const category = getCategory(row.dataset.categoryId);
+  if (!category) return;
+  const input = $("input", row);
+  const nextName = cleanLabel(input.value, "");
+
+  if (!nextName) {
+    showToast("카테고리 이름을 입력하세요.");
+    input.focus();
+    return;
+  }
+
+  const duplicate = state.categories.some((entry) => entry.id !== category.id && entry.name === nextName);
+  if (duplicate) {
+    showToast("이미 있는 카테고리 이름입니다.");
+    input.value = category.name;
+    input.focus();
+    return;
+  }
+
+  if (category.name === nextName) {
+    showToast("변경된 이름이 없습니다.");
+    return;
+  }
+
+  category.name = nextName;
+  persistAndRender();
+  renderCategoryManageList();
+  showToast("카테고리 이름을 수정했어요.");
+}
+
+function classifyExistingByType() {
+  if (!state.items.length) {
+    showToast("정리할 목록이 없습니다.");
+    return;
+  }
+
+  const ok = window.confirm("현재 목록을 숏폼/일반 카테고리로 정리할까요? 실행 전 이 기기에 백업을 남기고, 기존 분류 칸은 그대로 유지합니다.");
+  if (!ok) return;
+
+  const backedUpAt = new Date().toISOString();
+  localStorage.setItem(`${AUTO_CLASSIFY_BACKUP_PREFIX}${backedUpAt}`, JSON.stringify({
+    reason: "auto-classify",
+    backedUpAt,
+    state: buildFullExportPayload()
+  }));
+
+  ensureTypeCategories();
+  const now = new Date().toISOString();
+  state.items.forEach((item) => {
+    const category = getAutoCategoryForType(item.type === "short" ? "short" : "video");
+    item.categoryId = category.id;
+    item.slot = item.slot || DEFAULT_SLOT;
+    item.updatedAt = now;
+  });
+
+  persistAndRender();
+  renderCategoryManageList();
+  showToast("기존 목록을 숏폼/일반으로 정리했어요.");
+}
+
 function openMigrationDialog() {
   renderMigrationDialog();
   openDialog(els.migrationDialog);
@@ -1802,12 +1961,13 @@ function cleanImportedItem(raw, categoryIdMap = new Map()) {
     categoryId = categoryName ? ensureCategory(categoryName).id : DEFAULT_CATEGORY_ID;
   }
   const slot = ensureCategorySlot(categoryId, raw.slot || raw.section || raw.group || DEFAULT_SLOT);
+  const type = raw.type === "short" ? "short" : parsed.type;
 
   return {
     id: raw.id || createId(parsed.videoId),
     videoId: parsed.videoId,
-    type: raw.type === "short" ? "short" : parsed.type,
-    url: parsed.type === "short" ? `https://www.youtube.com/shorts/${parsed.videoId}` : `https://www.youtube.com/watch?v=${parsed.videoId}`,
+    type,
+    url: normalizeYoutubeItemUrl(parsed.videoId, type),
     title: String(raw.title || "").trim(),
     author: String(raw.author || "").trim(),
     note: String(raw.note || "").trim(),
@@ -1824,19 +1984,39 @@ function cleanImportedItem(raw, categoryIdMap = new Map()) {
 
 function ensureCategoryOptions() {
   ensureLibraryShape();
-
-  [els.categoryInput, els.editCategory].forEach((select) => {
-    const current = select.value;
-    select.innerHTML = "";
-    state.categories.forEach((category) => select.add(new Option(category.name, category.id)));
-    select.value = getCategory(current) ? current : state.categories[0].id;
-  });
-
+  renderSaveCategoryOptions();
+  renderEditCategoryOptions();
   renderSlotOptions(els.categoryInput, els.slotInput);
   renderSlotOptions(els.editCategory, els.editSlot);
 }
 
+function renderSaveCategoryOptions() {
+  const current = els.categoryInput.value || AUTO_CATEGORY_VALUE;
+  els.categoryInput.innerHTML = "";
+  els.categoryInput.add(new Option("자동 분류: 숏폼/일반", AUTO_CATEGORY_VALUE));
+  state.categories.forEach((category) => els.categoryInput.add(new Option(category.name, category.id)));
+  els.categoryInput.value = current === AUTO_CATEGORY_VALUE || getCategory(current)
+    ? current
+    : AUTO_CATEGORY_VALUE;
+}
+
+function renderEditCategoryOptions() {
+  const current = els.editCategory.value;
+  els.editCategory.innerHTML = "";
+  state.categories.forEach((category) => els.editCategory.add(new Option(category.name, category.id)));
+  els.editCategory.value = getCategory(current) ? current : state.categories[0].id;
+}
+
 function renderSlotOptions(categorySelect, slotSelect, preferredSlot = slotSelect.value) {
+  if (categorySelect === els.categoryInput && categorySelect.value === AUTO_CATEGORY_VALUE) {
+    slotSelect.innerHTML = "";
+    slotSelect.add(new Option("자동 분류 시 기본 칸 사용", DEFAULT_SLOT));
+    slotSelect.value = DEFAULT_SLOT;
+    slotSelect.disabled = true;
+    return DEFAULT_SLOT;
+  }
+
+  slotSelect.disabled = false;
   const category = getCategory(categorySelect.value) || getDefaultCategory();
   categorySelect.value = category.id;
   const slot = ensureCategorySlot(category.id, preferredSlot || category.slots[0] || DEFAULT_SLOT);
@@ -1844,6 +2024,7 @@ function renderSlotOptions(categorySelect, slotSelect, preferredSlot = slotSelec
   slotSelect.innerHTML = "";
   category.slots.forEach((value) => slotSelect.add(new Option(value, value)));
   slotSelect.value = slot;
+  return slot;
 }
 
 function ensureLibraryShape() {
@@ -1928,6 +2109,52 @@ function ensureCategory(name) {
   return category;
 }
 
+function ensureTypeCategories() {
+  ensureSystemCategory(TYPE_CATEGORY_SHORT_ID, "숏폼");
+  ensureSystemCategory(TYPE_CATEGORY_VIDEO_ID, "일반");
+}
+
+function ensureSystemCategory(id, fallbackName) {
+  let category = getCategory(id);
+  if (category) {
+    category.slots = normalizeSlots(category.slots);
+    return category;
+  }
+
+  category = {
+    id,
+    name: makeUniqueCategoryName(fallbackName),
+    slots: [DEFAULT_SLOT]
+  };
+  state.categories.push(category);
+  return category;
+}
+
+function getAutoCategoryForType(type) {
+  ensureTypeCategories();
+  return type === "short"
+    ? getCategory(TYPE_CATEGORY_SHORT_ID)
+    : getCategory(TYPE_CATEGORY_VIDEO_ID);
+}
+
+function isAutoCategorySelected() {
+  return els.categoryInput.value === AUTO_CATEGORY_VALUE;
+}
+
+function makeUniqueCategoryName(value) {
+  const base = cleanLabel(value, DEFAULT_CATEGORY_NAME);
+  if (!state.categories.some((category) => category.name === base)) return base;
+
+  const automatic = cleanLabel(`${base} 자동`, base);
+  if (!state.categories.some((category) => category.name === automatic)) return automatic;
+
+  let index = 2;
+  while (state.categories.some((category) => category.name === `${automatic} ${index}`)) {
+    index += 1;
+  }
+  return `${automatic} ${index}`;
+}
+
 function ensureCategorySlot(categoryId, slotName) {
   const category = getCategory(categoryId) || getDefaultCategory();
   const slot = cleanLabel(slotName, DEFAULT_SLOT);
@@ -1971,6 +2198,11 @@ function cleanSlots(slots) {
   return [...new Set((Array.isArray(slots) ? slots : [])
     .map((slot) => cleanLabel(slot, ""))
     .filter(Boolean))];
+}
+
+function normalizeSlots(slots) {
+  const cleaned = cleanSlots(slots);
+  return cleaned.length ? cleaned : [DEFAULT_SLOT];
 }
 
 function cleanLabel(value, fallback) {
