@@ -3,6 +3,23 @@ const IMPORT_VERSION = 2;
 const DEFAULT_CATEGORY_ID = "general";
 const DEFAULT_CATEGORY_NAME = "기본";
 const DEFAULT_SLOT = "기본";
+const SYNC_META_KEY = "tubeVaultSyncMeta";
+const CLOUD_BACKUP_PREFIX = "tubeVaultBackupBeforeCloudPull:";
+const SUPABASE_TABLE = "tube_vault_states";
+const SYNC_DEBOUNCE_MS = 1200;
+
+const syncConfig = {
+  syncEnabled: false,
+  supabaseUrl: "",
+  supabaseAnonKey: "",
+  allowSignup: false,
+  ...(window.TUBE_VAULT_CONFIG && typeof window.TUBE_VAULT_CONFIG === "object" ? window.TUBE_VAULT_CONFIG : {})
+};
+
+syncConfig.supabaseUrl = String(syncConfig.supabaseUrl || "").trim();
+syncConfig.supabaseAnonKey = String(syncConfig.supabaseAnonKey || "").trim();
+syncConfig.syncEnabled = Boolean(syncConfig.syncEnabled);
+syncConfig.allowSignup = Boolean(syncConfig.allowSignup);
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -23,6 +40,20 @@ const initialState = {
 let state = loadState();
 let toastTimer = 0;
 let deferredInstallPrompt = null;
+let syncMeta = loadSyncMeta();
+const syncState = {
+  client: null,
+  session: null,
+  configured: syncConfig.syncEnabled && Boolean(syncConfig.supabaseUrl && syncConfig.supabaseAnonKey),
+  available: false,
+  online: navigator.onLine,
+  busy: false,
+  status: "local",
+  errorMessage: "",
+  cloudRow: null,
+  needsCloudChoice: false,
+  saveTimer: 0
+};
 
 const els = {
   saveForm: $("#saveForm"),
@@ -63,6 +94,23 @@ const els = {
   editStatus: $("#editStatus"),
   editNote: $("#editNote"),
   deleteButton: $("#deleteButton"),
+  syncStatusBadge: $("#syncStatusBadge"),
+  syncDescription: $("#syncDescription"),
+  syncLastSync: $("#syncLastSync"),
+  syncAuthForm: $("#syncAuthForm"),
+  syncEmail: $("#syncEmail"),
+  syncPassword: $("#syncPassword"),
+  syncLoginButton: $("#syncLoginButton"),
+  syncSignupButton: $("#syncSignupButton"),
+  syncSessionPanel: $("#syncSessionPanel"),
+  syncUserEmail: $("#syncUserEmail"),
+  syncNowButton: $("#syncNowButton"),
+  syncLogoutButton: $("#syncLogoutButton"),
+  cloudChoicePanel: $("#cloudChoicePanel"),
+  cloudChoiceText: $("#cloudChoiceText"),
+  cloudPullButton: $("#cloudPullButton"),
+  cloudPushButton: $("#cloudPushButton"),
+  cloudMergeButton: $("#cloudMergeButton"),
   toast: $("#toast")
 };
 
@@ -73,6 +121,7 @@ function init() {
   ensureCategoryOptions();
   bindEvents();
   render();
+  initSync();
   registerServiceWorker();
   hydrateMissingTitles();
 }
@@ -111,13 +160,32 @@ function bindEvents() {
   els.importInput.addEventListener("change", importLibrary);
   els.editForm.addEventListener("submit", saveEdit);
   els.deleteButton.addEventListener("click", deleteEditingItem);
+  els.syncAuthForm.addEventListener("submit", handleSyncLogin);
+  els.syncSignupButton.addEventListener("click", handleSyncSignup);
+  els.syncLogoutButton.addEventListener("click", handleSyncLogout);
+  els.syncNowButton.addEventListener("click", handleSyncNow);
+  els.cloudPullButton.addEventListener("click", pullCloudState);
+  els.cloudPushButton.addEventListener("click", pushLocalState);
+  els.cloudMergeButton.addEventListener("click", mergeCloudState);
 
   window.addEventListener("storage", (event) => {
     if (event.key === STORAGE_KEY) {
       state = loadState();
       ensureLibraryShape();
       render();
+      scheduleCloudSave();
     }
+  });
+
+  window.addEventListener("online", () => {
+    syncState.online = true;
+    renderSyncPanel();
+    scheduleCloudSave();
+  });
+
+  window.addEventListener("offline", () => {
+    syncState.online = false;
+    renderSyncPanel();
   });
 
   window.addEventListener("beforeinstallprompt", (event) => {
@@ -358,6 +426,7 @@ function render() {
   renderSlotFilters();
   renderCards();
   renderPlayer();
+  renderSyncPanel();
 }
 
 function renderFilterState() {
@@ -565,6 +634,517 @@ async function hydrateMissingTitles() {
       return;
     }
   }
+}
+
+async function initSync() {
+  renderSyncPanel();
+  if (!syncState.configured) return;
+
+  if (!window.supabase || typeof window.supabase.createClient !== "function") {
+    try {
+      await loadSupabaseClientScript();
+    } catch {
+      syncState.status = "unavailable";
+      syncState.errorMessage = "Supabase 클라이언트를 불러오지 못했습니다.";
+      renderSyncPanel();
+      return;
+    }
+  }
+
+  if (!window.supabase || typeof window.supabase.createClient !== "function") {
+    syncState.status = "unavailable";
+    syncState.errorMessage = "Supabase 클라이언트를 불러오지 못했습니다.";
+    renderSyncPanel();
+    return;
+  }
+
+  try {
+    syncState.client = window.supabase.createClient(syncConfig.supabaseUrl, syncConfig.supabaseAnonKey, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true
+      }
+    });
+    syncState.available = true;
+
+    const { data, error } = await syncState.client.auth.getSession();
+    if (error) throw error;
+    syncState.session = data.session || null;
+    syncState.status = syncState.session ? "signed-in" : "local";
+    renderSyncPanel();
+
+    syncState.client.auth.onAuthStateChange((_event, session) => {
+      syncState.session = session || null;
+      syncState.errorMessage = "";
+      if (!syncState.session) {
+        syncState.status = "local";
+        syncState.cloudRow = null;
+        syncState.needsCloudChoice = false;
+      }
+      renderSyncPanel();
+      if (syncState.session) {
+        prepareCloudStateChoice();
+      }
+    });
+
+    if (syncState.session) {
+      await prepareCloudStateChoice();
+    }
+  } catch (error) {
+    setSyncError(error, "동기화 초기화에 실패했습니다.");
+  }
+}
+
+function loadSupabaseClientScript() {
+  const existing = document.querySelector('script[data-tube-vault-supabase="true"]');
+  if (existing) {
+    if (existing.dataset.loaded === "true") return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      existing.addEventListener("load", resolve, { once: true });
+      existing.addEventListener("error", reject, { once: true });
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
+    script.async = true;
+    script.defer = true;
+    script.dataset.tubeVaultSupabase = "true";
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      resolve();
+    }, { once: true });
+    script.addEventListener("error", reject, { once: true });
+    document.head.append(script);
+  });
+}
+
+function renderSyncPanel() {
+  const localDescription = "현재 저장한 링크는 이 브라우저의 localStorage에 저장됩니다. 같은 주소로 다른 기기에서 접속해도 자동으로 보이지 않습니다.";
+  const setupHint = "여러 기기 동기화를 사용하려면 Supabase 설정 후 로그인하세요.";
+  const signedIn = Boolean(syncState.session);
+  const lastSyncedAt = syncMeta.userId === syncState.session?.user?.id ? syncMeta.lastSyncedAt : "";
+  let badge = "이 기기에만 저장 중";
+  let detail = setupHint;
+
+  if (syncState.status === "error") {
+    badge = "동기화 실패";
+    detail = "동기화 실패. 로컬 저장은 유지되었습니다.";
+  } else if (signedIn && syncState.busy) {
+    badge = "클라우드 동기화 중";
+    detail = `클라우드 동기화 중 / 마지막 동기화: ${formatSyncTime(lastSyncedAt)}`;
+  } else if (signedIn && syncState.needsCloudChoice) {
+    badge = "동기화 선택 필요";
+    detail = "클라우드 데이터와 현재 기기 데이터 중 사용할 방식을 선택하세요.";
+  } else if (signedIn && syncState.available) {
+    badge = "클라우드 동기화 중";
+    detail = `클라우드 동기화 중 / 마지막 동기화: ${formatSyncTime(lastSyncedAt)}`;
+  } else if (syncState.configured && syncState.status === "unavailable") {
+    detail = "Supabase 클라이언트를 불러오지 못했습니다. 로컬 저장은 계속 사용할 수 있습니다.";
+  } else if (syncState.configured) {
+    detail = "Supabase 설정이 감지되었습니다. 로그인하면 이 계정의 데이터만 동기화됩니다.";
+  }
+
+  if (!syncState.online) {
+    detail = `${detail} 오프라인 상태라 로컬 저장만 진행됩니다.`;
+  }
+
+  els.syncStatusBadge.textContent = badge;
+  els.syncDescription.textContent = localDescription;
+  els.syncLastSync.textContent = detail;
+  els.syncAuthForm.hidden = !syncState.configured || !syncState.available || signedIn;
+  els.syncSignupButton.hidden = !syncConfig.allowSignup;
+  els.syncSessionPanel.hidden = !signedIn;
+  els.syncUserEmail.textContent = signedIn ? `로그인: ${syncState.session.user.email || "계정"}` : "";
+  els.syncNowButton.disabled = !canSync() || syncState.busy;
+  els.syncLogoutButton.disabled = syncState.busy;
+  els.syncLoginButton.disabled = syncState.busy || !syncState.online;
+  els.syncSignupButton.disabled = syncState.busy || !syncState.online;
+  els.cloudChoicePanel.hidden = !signedIn || !syncState.needsCloudChoice;
+  els.cloudChoiceText.textContent = syncState.cloudRow
+    ? "이 계정에 클라우드 데이터가 있습니다. 로컬 데이터를 덮어쓰기 전 자동 백업을 만듭니다."
+    : "이 계정에는 아직 클라우드 데이터가 없습니다. 현재 기기 데이터를 업로드할 수 있습니다.";
+  els.cloudPullButton.disabled = !syncState.cloudRow || syncState.busy || !syncState.online;
+  els.cloudMergeButton.disabled = !syncState.cloudRow || syncState.busy || !syncState.online;
+  els.cloudPushButton.disabled = syncState.busy || !syncState.online;
+}
+
+async function handleSyncLogin(event) {
+  event.preventDefault();
+  if (!syncState.available || !syncState.client) return;
+  const email = els.syncEmail.value.trim();
+  const password = els.syncPassword.value;
+  if (!email || !password) {
+    showToast("이메일과 비밀번호를 입력하세요.");
+    return;
+  }
+
+  setSyncBusy(true);
+  try {
+    const { data, error } = await syncState.client.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    syncState.session = data.session || null;
+    els.syncPassword.value = "";
+    syncState.status = syncState.session ? "signed-in" : "local";
+    renderSyncPanel();
+    if (syncState.session) {
+      await prepareCloudStateChoice();
+      showToast("로그인했어요.");
+    }
+  } catch (error) {
+    setSyncError(error, "로그인하지 못했습니다.");
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+async function handleSyncSignup() {
+  if (!syncConfig.allowSignup || !syncState.available || !syncState.client) return;
+  const email = els.syncEmail.value.trim();
+  const password = els.syncPassword.value;
+  if (!email || !password) {
+    showToast("이메일과 비밀번호를 입력하세요.");
+    return;
+  }
+
+  setSyncBusy(true);
+  try {
+    const { data, error } = await syncState.client.auth.signUp({ email, password });
+    if (error) throw error;
+    syncState.session = data.session || null;
+    els.syncPassword.value = "";
+    renderSyncPanel();
+    showToast("회원가입 요청을 보냈어요. 이메일 확인이 필요할 수 있어요.");
+    if (syncState.session) await prepareCloudStateChoice();
+  } catch (error) {
+    setSyncError(error, "회원가입하지 못했습니다.");
+  } finally {
+    setSyncBusy(false);
+  }
+}
+
+async function handleSyncLogout() {
+  if (!syncState.client) return;
+  setSyncBusy(true);
+  try {
+    const { error } = await syncState.client.auth.signOut();
+    if (error) throw error;
+    syncState.session = null;
+    syncState.status = "local";
+    syncState.cloudRow = null;
+    syncState.needsCloudChoice = false;
+    showToast("로그아웃했어요.");
+  } catch (error) {
+    setSyncError(error, "로그아웃하지 못했습니다.");
+  } finally {
+    setSyncBusy(false);
+    renderSyncPanel();
+  }
+}
+
+async function handleSyncNow() {
+  if (!canSync()) {
+    showToast(syncState.online ? "로그인 후 동기화할 수 있어요." : "오프라인 상태입니다.");
+    return;
+  }
+
+  setSyncBusy(true);
+  try {
+    const row = await fetchCloudState();
+    syncState.cloudRow = row;
+    if (shouldPromptForCloud(row)) {
+      syncState.needsCloudChoice = true;
+      syncState.status = "needs-choice";
+      renderSyncPanel();
+      showToast("클라우드 데이터 처리 방식을 선택하세요.");
+      return;
+    }
+
+    syncState.needsCloudChoice = false;
+    await upsertCloudState();
+    showToast("지금 동기화했어요.");
+  } catch (error) {
+    setSyncError(error, "지금 동기화하지 못했습니다.");
+  } finally {
+    setSyncBusy(false);
+    renderSyncPanel();
+  }
+}
+
+async function prepareCloudStateChoice() {
+  if (!canSync()) return;
+
+  setSyncBusy(true);
+  try {
+    const row = await fetchCloudState();
+    syncState.cloudRow = row;
+    syncState.needsCloudChoice = !row || shouldPromptForCloud(row);
+    syncState.status = syncState.needsCloudChoice ? "needs-choice" : "synced";
+    if (row && !syncState.needsCloudChoice) {
+      markCloudSynced(row.updated_at || syncMeta.lastSyncedAt);
+      scheduleCloudSave();
+    }
+  } catch (error) {
+    setSyncError(error, "클라우드 상태를 확인하지 못했습니다.");
+  } finally {
+    setSyncBusy(false);
+    renderSyncPanel();
+  }
+}
+
+async function fetchCloudState() {
+  const userId = syncState.session?.user?.id;
+  if (!userId) return null;
+  const { data, error } = await syncState.client
+    .from(SUPABASE_TABLE)
+    .select("data, updated_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function pullCloudState() {
+  if (!canSync()) return;
+
+  setSyncBusy(true);
+  try {
+    const row = syncState.cloudRow || await fetchCloudState();
+    if (!row) {
+      showToast("불러올 클라우드 데이터가 없어요.");
+      return;
+    }
+
+    backupLocalState("cloud-pull");
+    applyStateObject(row.data);
+    syncState.needsCloudChoice = false;
+    syncState.cloudRow = row;
+    markCloudSynced(row.updated_at || new Date().toISOString());
+    persistAndRender(false);
+    showToast("클라우드 데이터를 불러왔어요.");
+  } catch (error) {
+    setSyncError(error, "클라우드 데이터를 불러오지 못했습니다.");
+  } finally {
+    setSyncBusy(false);
+    renderSyncPanel();
+  }
+}
+
+async function pushLocalState() {
+  if (!canSync()) return;
+
+  setSyncBusy(true);
+  try {
+    syncState.needsCloudChoice = false;
+    await upsertCloudState();
+    showToast("현재 기기 데이터를 업로드했어요.");
+  } catch (error) {
+    setSyncError(error, "현재 기기 데이터를 업로드하지 못했습니다.");
+  } finally {
+    setSyncBusy(false);
+    renderSyncPanel();
+  }
+}
+
+async function mergeCloudState() {
+  if (!canSync()) return;
+
+  setSyncBusy(true);
+  try {
+    const row = syncState.cloudRow || await fetchCloudState();
+    if (!row) {
+      await upsertCloudState();
+      showToast("업로드할 클라우드 데이터를 만들었어요.");
+      return;
+    }
+
+    backupLocalState("cloud-merge");
+    mergeStateObject(row.data);
+    syncState.needsCloudChoice = false;
+    persistAndRender(false);
+    await upsertCloudState();
+    showToast("가능한 항목을 병합하고 동기화했어요.");
+  } catch (error) {
+    setSyncError(error, "클라우드 데이터와 병합하지 못했습니다.");
+  } finally {
+    setSyncBusy(false);
+    renderSyncPanel();
+  }
+}
+
+function scheduleCloudSave() {
+  window.clearTimeout(syncState.saveTimer);
+  if (!canSync() || syncState.needsCloudChoice) return;
+  syncState.saveTimer = window.setTimeout(() => {
+    upsertCloudState({ silent: true }).catch((error) => {
+      setSyncError(error, "클라우드 저장에 실패했습니다.");
+    });
+  }, SYNC_DEBOUNCE_MS);
+}
+
+async function upsertCloudState({ silent = false } = {}) {
+  if (!canSync() || syncState.needsCloudChoice) return false;
+
+  const userId = syncState.session.user.id;
+  const updatedAt = new Date().toISOString();
+  syncState.status = "syncing";
+  if (!silent) renderSyncPanel();
+
+  const { error } = await syncState.client
+    .from(SUPABASE_TABLE)
+    .upsert({
+      user_id: userId,
+      data: serializeStateForCloud(),
+      updated_at: updatedAt
+    }, { onConflict: "user_id" });
+
+  if (error) throw error;
+  syncState.status = "synced";
+  syncState.errorMessage = "";
+  syncState.cloudRow = {
+    data: serializeStateForCloud(),
+    updated_at: updatedAt
+  };
+  markCloudSynced(updatedAt);
+  renderSyncPanel();
+  return true;
+}
+
+function shouldPromptForCloud(row) {
+  if (!row) return false;
+  if (syncMeta.userId !== syncState.session?.user?.id || !syncMeta.lastSyncedAt) return true;
+  return new Date(row.updated_at).getTime() > new Date(syncMeta.lastSyncedAt).getTime() + 1000;
+}
+
+function canSync() {
+  return syncState.configured
+    && syncState.available
+    && Boolean(syncState.client)
+    && Boolean(syncState.session)
+    && syncState.online;
+}
+
+function setSyncBusy(value) {
+  syncState.busy = value;
+  if (value && syncState.status !== "error") syncState.status = "syncing";
+  renderSyncPanel();
+}
+
+function setSyncError(error, fallback) {
+  syncState.status = "error";
+  syncState.errorMessage = error?.message || fallback;
+  renderSyncPanel();
+  showToast("동기화 실패. 로컬 저장은 유지되었습니다.");
+}
+
+function serializeStateForCloud() {
+  ensureLibraryShape();
+  return JSON.parse(JSON.stringify({
+    version: IMPORT_VERSION,
+    profiles: state.profiles,
+    categories: state.categories,
+    items: state.items,
+    view: state.view,
+    categoryFilter: state.categoryFilter,
+    slotFilter: state.slotFilter,
+    query: state.query,
+    sort: state.sort,
+    selectedId: state.selectedId
+  }));
+}
+
+function applyStateObject(raw) {
+  const incoming = raw && typeof raw === "object" ? raw : {};
+  state = {
+    ...structuredClone(initialState),
+    ...incoming,
+    profiles: Array.isArray(incoming.profiles) ? incoming.profiles : ["나"],
+    categories: Array.isArray(incoming.categories) ? incoming.categories : structuredClone(initialState.categories),
+    items: Array.isArray(incoming.items) ? incoming.items : []
+  };
+  ensureLibraryShape();
+}
+
+function mergeStateObject(raw) {
+  const incoming = normalizeExternalState(raw);
+  incoming.profiles.forEach((profile) => ensureProfile(String(profile)));
+  incoming.categories.forEach(mergeImportedCategory);
+
+  const indexByVideo = new Map(state.items.map((item, index) => [`${item.type}:${item.videoId}`, index]));
+  incoming.items.map(cleanImportedItem).filter(Boolean).forEach((item) => {
+    const key = `${item.type}:${item.videoId}`;
+    const existingIndex = indexByVideo.get(key);
+    if (existingIndex === undefined) {
+      indexByVideo.set(key, state.items.length);
+      state.items.push(item);
+      return;
+    }
+
+    const existing = state.items[existingIndex];
+    if (new Date(item.updatedAt).getTime() > new Date(existing.updatedAt || existing.createdAt || 0).getTime()) {
+      state.items[existingIndex] = {
+        ...existing,
+        ...item,
+        id: existing.id || item.id
+      };
+    }
+  });
+
+  ensureLibraryShape();
+}
+
+function normalizeExternalState(raw) {
+  const previous = state;
+  applyStateObject(raw);
+  const normalized = serializeStateForCloud();
+  state = previous;
+  ensureLibraryShape();
+  return normalized;
+}
+
+function backupLocalState(reason) {
+  const backedUpAt = new Date().toISOString();
+  localStorage.setItem(`${CLOUD_BACKUP_PREFIX}${backedUpAt}`, JSON.stringify({
+    reason,
+    backedUpAt,
+    state: serializeStateForCloud()
+  }));
+}
+
+function loadSyncMeta() {
+  try {
+    const meta = JSON.parse(localStorage.getItem(SYNC_META_KEY));
+    if (!meta || typeof meta !== "object") return {};
+    return {
+      userId: String(meta.userId || ""),
+      lastSyncedAt: String(meta.lastSyncedAt || "")
+    };
+  } catch {
+    return {};
+  }
+}
+
+function saveSyncMeta() {
+  localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta));
+}
+
+function markCloudSynced(lastSyncedAt) {
+  if (!syncState.session?.user?.id || !lastSyncedAt) return;
+  syncMeta = {
+    userId: syncState.session.user.id,
+    lastSyncedAt
+  };
+  saveSyncMeta();
+}
+
+function formatSyncTime(value) {
+  if (!value) return "아직 없음";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "아직 없음";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function exportLibrary() {
@@ -856,6 +1436,7 @@ function persistAndRender(show = true) {
 function persist() {
   state.version = IMPORT_VERSION;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  scheduleCloudSave();
 }
 
 function loadState() {

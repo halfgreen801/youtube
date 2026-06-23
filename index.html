@@ -97,6 +97,50 @@
 
             <div class="slot-cloud" id="slotCloud" aria-label="분류 칸 필터"></div>
           </section>
+
+          <section class="sync-panel" aria-labelledby="syncTitle">
+            <div class="section-heading">
+              <h2 id="syncTitle">저장 방식</h2>
+              <span id="syncStatusBadge" class="sync-badge">이 기기에만 저장 중</span>
+            </div>
+
+            <p id="syncDescription" class="sync-description">
+              현재 저장한 링크는 이 브라우저의 localStorage에 저장됩니다. 같은 주소로 다른 기기에서 접속해도 자동으로 보이지 않습니다.
+            </p>
+            <p id="syncLastSync" class="sync-last">여러 기기 동기화를 사용하려면 Supabase 설정 후 로그인하세요.</p>
+
+            <form id="syncAuthForm" class="sync-auth" hidden>
+              <label>
+                이메일
+                <input id="syncEmail" type="email" autocomplete="email" placeholder="name@example.com">
+              </label>
+              <label>
+                비밀번호
+                <input id="syncPassword" type="password" autocomplete="current-password" placeholder="비밀번호">
+              </label>
+              <div class="sync-actions">
+                <button class="primary-button" id="syncLoginButton" type="submit">로그인</button>
+                <button class="secondary-button" id="syncSignupButton" type="button" hidden>회원가입</button>
+              </div>
+            </form>
+
+            <div id="syncSessionPanel" class="sync-session" hidden>
+              <span id="syncUserEmail" class="sync-user"></span>
+              <div class="sync-actions">
+                <button class="secondary-button" id="syncNowButton" type="button">지금 동기화</button>
+                <button class="ghost-button" id="syncLogoutButton" type="button">로그아웃</button>
+              </div>
+            </div>
+
+            <div id="cloudChoicePanel" class="cloud-choice" hidden>
+              <p id="cloudChoiceText"></p>
+              <div class="cloud-choice-actions">
+                <button class="secondary-button" id="cloudPullButton" type="button">클라우드 데이터 불러오기</button>
+                <button class="secondary-button" id="cloudPushButton" type="button">현재 기기 데이터 업로드</button>
+                <button class="secondary-button" id="cloudMergeButton" type="button">가능하면 병합</button>
+              </div>
+            </div>
+          </section>
         </aside>
 
         <section class="content" aria-label="저장된 YouTube 목록">
@@ -223,6 +267,7 @@
       </article>
     </template>
 
+    <script src="config.js" defer></script>
     <script src="app.js" defer></script>
   </body>
 </html>

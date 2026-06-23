@@ -1,20 +1,86 @@
 # 튜브서랍
 
-YouTube 계정과 분리해서 영상과 숏츠 링크를 저장하는 개인용 PWA입니다.
+튜브서랍은 YouTube 계정과 분리해서 영상과 숏츠 링크를 저장하는 개인용 PWA입니다. 앱 주소는 공개될 수 있지만, 기본 저장 데이터는 현재 기기의 브라우저 `localStorage` 안에만 저장됩니다. Supabase 동기화를 직접 설정하고 로그인한 경우에만 같은 계정의 클라우드 데이터와 동기화됩니다.
 
-## 사용
+## 이 앱은 무엇인가
 
-1. `index.html`을 브라우저에서 열거나 로컬 서버로 실행합니다.
-2. YouTube 영상/숏츠 링크를 붙여넣고 저장합니다.
-3. 다른 기기에서는 `내보내기`로 받은 JSON 파일을 `가져오기` 하면 됩니다.
-
-## 특징
-
-- YouTube 로그인 없음
-- 영상과 숏츠 링크 저장
-- 프로필, 태그, 메모, 검색, 상태 필터
+- YouTube 영상/숏츠 링크 저장
+- 카테고리와 분류 칸 관리
+- 메모, 검색, 상태 필터, 즐겨찾기
 - 앱 안에서 YouTube 임베드 재생
-- JSON 백업과 복원
-- PWA 설치와 오프라인 앱 셸 캐시
+- JSON 내보내기/가져오기 백업
+- GitHub Pages에 올릴 수 있는 정적 PWA
 
-자동 기기 동기화가 필요하면 이후에 iCloud Drive 파일, Supabase, Firebase 같은 저장소를 붙일 수 있습니다.
+## 기본 저장 방식
+
+기본값은 `localStorage`입니다.
+
+- 같은 브라우저/같은 기기에서는 저장 데이터가 유지됩니다.
+- 같은 GitHub Pages 주소로 다른 기기에서 접속해도 자동으로 보이지 않습니다.
+- 브라우저 데이터 삭제, 시크릿 모드 종료, 저장소 초기화가 발생하면 로컬 데이터가 사라질 수 있습니다.
+- 중요한 데이터는 `내보내기`로 JSON 백업을 만들어 두세요.
+
+## GitHub Pages 배포 방법
+
+1. 이 저장소를 GitHub에 올립니다.
+2. GitHub 저장소의 `Settings > Pages`로 이동합니다.
+3. 배포 소스를 `Deploy from a branch`로 선택합니다.
+4. 브랜치와 폴더를 선택합니다. 보통 `main` / `/root`입니다.
+5. Pages 주소로 접속해서 앱이 열리는지 확인합니다.
+
+정적 파일만 사용하므로 별도 백엔드가 필요 없습니다.
+
+## 여러 기기 동기화 사용 방법
+
+동기화는 선택 기능입니다. 설정하지 않아도 앱은 localStorage-only 모드로 정상 작동합니다.
+
+1. Supabase 프로젝트를 만듭니다.
+2. `Authentication`에서 이메일/비밀번호 로그인을 켭니다.
+3. 개인용으로 쓸 계정을 먼저 만든 뒤, 공개 회원가입을 끄는 방식을 권장합니다.
+4. Supabase SQL Editor에서 `supabase/schema.sql` 내용을 실행합니다.
+5. `config.example.js`를 참고해 `config.js`를 수정합니다.
+
+```js
+window.TUBE_VAULT_CONFIG = {
+  syncEnabled: true,
+  supabaseUrl: "https://YOUR_PROJECT.supabase.co",
+  supabaseAnonKey: "YOUR_SUPABASE_ANON_PUBLIC_KEY",
+  allowSignup: false
+};
+```
+
+6. GitHub Pages에 다시 배포합니다.
+7. 앱의 `저장 방식` 영역에서 로그인합니다.
+8. 클라우드 데이터가 있으면 `클라우드 데이터 불러오기`, `현재 기기 데이터 업로드`, `가능하면 병합` 중 하나를 선택합니다.
+
+`allowSignup`이 `false`이면 앱 안의 회원가입 버튼은 숨겨집니다. 개인용 앱이라면 Supabase 대시보드에서 내 계정을 만든 뒤 `allowSignup: false`로 두는 구성이 안전합니다.
+
+## 보안 주의사항
+
+- `service_role` key, 관리자 키, 개인 토큰은 절대 브라우저 코드에 넣지 마세요.
+- 브라우저에는 Supabase `anon/public` key만 들어갈 수 있습니다.
+- 저장소가 public이면 앱 코드와 `config.js`의 anon key는 공개될 수 있습니다.
+- anon key는 공개 가능하므로, RLS 없이 쓰면 위험합니다.
+- 데이터 보호의 핵심은 `supabase/schema.sql`의 Row Level Security입니다.
+- `public.tube_vault_states`는 `auth.uid()`가 `user_id`와 같은 행만 읽고 쓸 수 있어야 합니다.
+
+## 백업/복원 방법
+
+- `내보내기`: 현재 저장된 링크, 카테고리, 분류 칸을 JSON 파일로 저장합니다.
+- `가져오기`: JSON 파일의 항목을 현재 기기 데이터에 병합합니다. 이미 있는 같은 영상/숏츠는 건너뜁니다.
+- 클라우드 데이터를 불러오기 전에는 앱이 자동으로 `tubeVaultBackupBeforeCloudPull:<timestamp>` localStorage 백업을 만듭니다.
+- Supabase 동기화를 처음 켜기 전에는 수동 JSON 내보내기를 한 번 해두는 것을 권장합니다.
+
+## 수동 테스트 체크리스트
+
+- 새 방문자가 앱을 열면 localStorage-only 모드로 정상 작동한다.
+- 기존 localStorage 데이터가 유지된다.
+- 모바일 360px 폭에서 레이아웃이 깨지지 않는다.
+- 링크 추가/수정/삭제가 정상 작동한다.
+- export/import가 정상 작동한다.
+- Supabase 설정값이 비어 있어도 console fatal error가 없다.
+- Supabase 설정 후 로그인/로그아웃이 된다.
+- 로그인 후 수동 동기화가 된다.
+- 다른 기기 또는 다른 브라우저에서 같은 계정으로 로그인하면 클라우드 데이터를 불러올 수 있다.
+- 오프라인 상태에서도 로컬 저장은 된다.
+- service worker 캐시 업데이트 후 새 UI가 반영된다.
