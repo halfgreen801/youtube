@@ -1,5 +1,5 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.06.23.6";
+const APP_VERSION = "2026.06.23.7";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
@@ -84,6 +84,7 @@ let waitingServiceWorker = null;
 let refreshingForServiceWorker = false;
 let currentPage = 1;
 let pageSize = loadPageSize();
+let activePreviewItemId = null;
 let draftTheme = { ...currentTheme };
 let themeDialogSaved = false;
 let syncMeta = loadSyncMeta();
@@ -290,7 +291,7 @@ function bindEvents() {
   });
   els.slotCloud.addEventListener("click", handleSlotFilter);
   els.videoGrid.addEventListener("click", handleCardAction);
-  els.closePlayerButton.addEventListener("click", closePlayer);
+  els.closePlayerButton?.addEventListener("click", closePlayer);
   els.exportButton.addEventListener("click", exportLibrary);
   els.importInput.addEventListener("change", importLibrary);
   els.categoryManageButton.addEventListener("click", openCategoryManageDialog);
@@ -460,9 +461,6 @@ function handleSave(event) {
     });
     added += 1;
 
-    if (added === 1) {
-      state.selectedId = state.items[0].id;
-    }
   });
 
   ensureProfile(profile);
@@ -549,8 +547,23 @@ function handleCardAction(event) {
   const item = state.items.find((entry) => entry.id === card.dataset.id);
   if (!item) return;
 
+  const actionButton = event.target.closest("[data-action]");
+  if (actionButton?.dataset.action === "play-preview") {
+    event.preventDefault();
+    event.stopPropagation();
+    playInlinePreview(item.id);
+    return;
+  }
+
+  if (actionButton?.dataset.action === "stop-preview") {
+    event.preventDefault();
+    event.stopPropagation();
+    stopInlinePreview(item.id);
+    return;
+  }
+
   if (event.target.closest(".thumb-button")) {
-    playItem(item.id);
+    playInlinePreview(item.id);
     return;
   }
 
@@ -668,22 +681,19 @@ function deleteEditingItem() {
 }
 
 function playItem(id) {
-  const item = state.items.find((entry) => entry.id === id);
-  if (!item) return;
-  state.selectedId = id;
-  persist();
-  renderPlayer();
-  els.playerPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  playInlinePreview(id);
 }
 
 function closePlayer() {
   state.selectedId = null;
-  els.playerFrame.src = "about:blank";
-  els.playerPanel.hidden = true;
+  if (els.playerFrame) els.playerFrame.src = "about:blank";
+  if (els.playerPanel) els.playerPanel.hidden = true;
   persist();
 }
 
 function render() {
+  stopInlinePreview();
+  state.selectedId = null;
   ensureLibraryShape();
   ensureCategoryOptions();
   els.totalCount.value = String(state.items.length);
@@ -748,13 +758,10 @@ function renderCards(items, filteredItemCount) {
   items.forEach((item) => {
     const node = els.cardTemplate.content.firstElementChild.cloneNode(true);
     node.dataset.id = item.id;
+    node.dataset.itemId = item.id;
 
-    const image = $(".thumb", node);
-    image.src = thumbnailUrl(item);
-    image.alt = `${displayTitle(item)} 썸네일`;
-    image.loading = "lazy";
-
-    $(".duration-chip", node).textContent = item.status === "done" ? "봤음" : "볼 예정";
+    const mediaSlot = $(".card-media", node);
+    mediaSlot.replaceWith(renderMediaPreview(item));
 
     const typeBadge = $(".type-badge", node);
     typeBadge.textContent = getTypeLabel(item.type);
@@ -784,21 +791,108 @@ function renderMigrationEmptyNote(visibleItemCount) {
 }
 
 function renderPlayer() {
-  const item = state.items.find((entry) => entry.id === state.selectedId);
-  if (!item) {
-    els.playerPanel.hidden = true;
-    return;
-  }
+  if (!els.playerPanel) return;
+  els.playerPanel.hidden = true;
+  if (els.playerFrame) els.playerFrame.src = "about:blank";
+}
 
-  els.playerPanel.hidden = false;
-  els.playerTitle.textContent = displayTitle(item);
-  els.playerType.textContent = getTypeLabel(item.type);
-  els.playerType.className = `type-badge ${getTypeClass(item.type)}`;
-  els.openPlayerLink.href = item.url;
-  const embed = `https://www.youtube.com/embed/${item.videoId}?autoplay=1&playsinline=1&rel=0`;
-  if (els.playerFrame.src !== embed) {
-    els.playerFrame.src = embed;
+function renderMediaPreview(item) {
+  const preview = document.createElement("div");
+  preview.className = "media-preview";
+  preview.dataset.itemId = item.id;
+  preview.dataset.videoId = item.videoId;
+  preview.dataset.type = item.type === "short" ? "short" : "video";
+
+  const image = document.createElement("img");
+  image.className = "video-thumbnail thumb";
+  image.src = thumbnailUrl(item);
+  image.alt = `${displayTitle(item) || "YouTube 영상"} 썸네일`;
+  image.loading = "lazy";
+
+  const playButton = document.createElement("button");
+  playButton.className = "play-preview-button";
+  playButton.type = "button";
+  playButton.dataset.action = "play-preview";
+  playButton.setAttribute("aria-label", `${displayTitle(item)} 재생`);
+  playButton.title = "이 영상 재생";
+  playButton.textContent = "▶";
+
+  const status = document.createElement("span");
+  status.className = "duration-chip";
+  status.textContent = item.status === "done" ? "봤음" : "볼 예정";
+
+  preview.append(image, playButton, status);
+  return preview;
+}
+
+function playInlinePreview(itemId) {
+  const item = state.items.find((entry) => entry.id === itemId);
+  if (!item) return;
+
+  if (activePreviewItemId === itemId) return;
+  stopInlinePreview();
+
+  const card = findCardByItemId(itemId);
+  const mediaElement = card?.querySelector(".media-preview");
+  if (!card || !mediaElement) return;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "inline-player-wrap";
+  wrapper.dataset.itemId = item.id;
+  wrapper.dataset.videoId = item.videoId;
+  wrapper.dataset.type = item.type === "short" ? "short" : "video";
+
+  const iframe = document.createElement("iframe");
+  iframe.className = "inline-player";
+  iframe.title = displayTitle(item) || "YouTube 영상";
+  iframe.src = createYoutubeEmbedUrl(item.videoId, item.type, { autoplay: true });
+  iframe.allow = "accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+  iframe.allowFullscreen = true;
+
+  const stopButton = document.createElement("button");
+  stopButton.className = "stop-preview-button";
+  stopButton.type = "button";
+  stopButton.dataset.action = "stop-preview";
+  stopButton.setAttribute("aria-label", "미리보기 닫기");
+  stopButton.title = "미리보기 닫기";
+  stopButton.textContent = "닫기";
+
+  wrapper.append(iframe, stopButton);
+  mediaElement.replaceWith(wrapper);
+  card.classList.add("preview-playing");
+  activePreviewItemId = itemId;
+}
+
+function stopInlinePreview(itemId = activePreviewItemId) {
+  if (!itemId) return;
+
+  const item = state.items.find((entry) => entry.id === itemId);
+  const card = findCardByItemId(itemId);
+  const mediaElement = card?.querySelector(".inline-player-wrap");
+  if (mediaElement && item) {
+    restorePreview(mediaElement, item);
   }
+  if (card) card.classList.remove("preview-playing");
+  if (activePreviewItemId === itemId) activePreviewItemId = null;
+}
+
+function createYoutubeEmbedUrl(videoId, type, options = {}) {
+  const params = new URLSearchParams({
+    rel: "0",
+    playsinline: "1"
+  });
+  if (options.autoplay) params.set("autoplay", "1");
+  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
+}
+
+function restorePreview(mediaElement, item) {
+  mediaElement.replaceWith(renderMediaPreview(item));
+}
+
+function findCardByItemId(itemId) {
+  return $$(".video-card", els.videoGrid).find((card) =>
+    card.dataset.itemId === itemId || card.dataset.id === itemId
+  );
 }
 
 function getFilteredItems() {

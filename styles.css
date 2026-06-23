@@ -699,6 +699,9 @@ label.import-button:focus-within {
   box-shadow: 0 12px 30px rgba(120, 78, 92, 0.08);
 }
 
+.card-media,
+.media-preview,
+.inline-player-wrap,
 .thumb-button {
   grid-area: thumb;
   position: relative;
@@ -706,18 +709,26 @@ label.import-button:focus-within {
   align-self: start;
   width: 120px;
   aspect-ratio: 16 / 9;
+  overflow: hidden;
   border: 0;
   border-radius: 0;
   padding: 0;
   background: #0d1514;
 }
 
+.media-preview {
+  border: 0;
+}
+
+.video-thumbnail,
 .thumb {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
 }
 
+.play-preview-button,
 .play-chip {
   position: absolute;
   left: 12px;
@@ -726,10 +737,21 @@ label.import-button:focus-within {
   place-items: center;
   width: 40px;
   height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
   border-radius: var(--radius);
   color: #fff;
-  background: rgba(24, 35, 34, 0.84);
+  background: rgba(24, 35, 34, 0.78);
   font-size: 0.9rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.play-preview-button:hover,
+.play-preview-button:focus-visible {
+  color: var(--ink);
+  background: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent-dark) 52%, transparent);
+  outline-offset: 2px;
 }
 
 .duration-chip {
@@ -739,6 +761,53 @@ label.import-button:focus-within {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.18);
   background: rgba(24, 35, 34, 0.8);
+  pointer-events: none;
+}
+
+.inline-player-wrap {
+  background: #000;
+}
+
+.inline-player {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.stop-preview-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(24, 35, 34, 0.82);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.stop-preview-button:hover,
+.stop-preview-button:focus-visible {
+  color: var(--ink);
+  background: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent-dark) 52%, transparent);
+  outline-offset: 2px;
+}
+
+.video-card.preview-playing {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "thumb"
+    "body"
+    "actions";
+}
+
+.video-card.preview-playing .media-preview,
+.video-card.preview-playing .inline-player-wrap {
+  width: 100%;
 }
 
 .card-body {
@@ -1521,6 +1590,9 @@ label.import-button:focus-within {
       "actions actions";
   }
 
+  .card-media,
+  .media-preview,
+  .inline-player-wrap,
   .thumb-button {
     grid-area: thumb;
     width: 96px;
@@ -1528,6 +1600,12 @@ label.import-button:focus-within {
     aspect-ratio: 16 / 9;
   }
 
+  .video-card.preview-playing .media-preview,
+  .video-card.preview-playing .inline-player-wrap {
+    width: 100%;
+  }
+
+  .play-preview-button,
   .play-chip {
     left: 8px;
     bottom: 8px;

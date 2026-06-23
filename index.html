@@ -221,22 +221,6 @@
             </form>
           </section>
 
-          <section class="player-panel" id="playerPanel" hidden aria-label="재생">
-            <div class="player-heading">
-              <div>
-                <span id="playerType" class="type-badge">롱폼</span>
-                <h2 id="playerTitle">선택한 영상</h2>
-              </div>
-              <div class="player-actions">
-                <a id="openPlayerLink" class="ghost-button" target="_blank" rel="noreferrer">YouTube</a>
-                <button id="closePlayerButton" class="icon-button" type="button" title="닫기" aria-label="닫기">×</button>
-              </div>
-            </div>
-            <div class="player-frame">
-              <iframe id="playerFrame" title="YouTube player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
-            </div>
-          </section>
-
           <div class="empty-state" id="emptyState">
             <strong>아직 저장한 링크가 없어요.</strong>
             <span>YouTube 영상이나 숏츠 링크를 붙여넣으면 여기에 모입니다.</span>
@@ -591,11 +575,7 @@
 
     <template id="videoCardTemplate">
       <article class="video-card">
-        <button class="thumb-button" type="button" aria-label="재생">
-          <img class="thumb" alt="">
-          <span class="play-chip">▶</span>
-          <span class="duration-chip"></span>
-        </button>
+        <div class="card-media"></div>
 
         <div class="card-body">
           <div class="card-meta">
