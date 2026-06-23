@@ -1,8 +1,9 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.06.23.8";
+const APP_VERSION = "2026.06.24.1";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
+const CATEGORY_SORT_STORAGE_KEY = "gaegol-tube-category-sort-mode-v1";
 const IMPORT_VERSION = 2;
 const CATEGORY_SHARE_VERSION = 3;
 const DEFAULT_PAGE_SIZE = 10;
@@ -10,6 +11,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 100];
 const DEFAULT_CATEGORY_ID = "general";
 const DEFAULT_CATEGORY_NAME = "기본";
 const DEFAULT_SLOT = "기본";
+const CATEGORY_SORT_MODES = ["custom", "name", "created"];
 const SYNC_META_KEY = "tubeVaultSyncMeta";
 const CLOUD_BACKUP_PREFIX = "tubeVaultBackupBeforeCloudPull:";
 const CATEGORY_DELETE_BACKUP_PREFIX = "gaegolTubeBeforeCategoryDelete:";
@@ -67,7 +69,13 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const initialState = {
   version: IMPORT_VERSION,
   profiles: ["나"],
-  categories: [{ id: DEFAULT_CATEGORY_ID, name: DEFAULT_CATEGORY_NAME, slots: [DEFAULT_SLOT] }],
+  categories: [{
+    id: DEFAULT_CATEGORY_ID,
+    name: DEFAULT_CATEGORY_NAME,
+    slots: [DEFAULT_SLOT],
+    createdAt: "2020-01-01T00:00:00.000Z",
+    order: 0
+  }],
   items: [],
   view: "all",
   typeFilter: "all",
@@ -88,6 +96,7 @@ let waitingServiceWorker = null;
 let refreshingForServiceWorker = false;
 let currentPage = 1;
 let pageSize = loadPageSize();
+let categorySortMode = loadCategorySortMode();
 let activePreviewItemId = null;
 let draftTheme = { ...currentTheme };
 let themeDialogSaved = false;
@@ -158,6 +167,8 @@ const els = {
   categoryManageButton: $("#categoryManageButton"),
   categoryManageDialog: $("#categoryManageDialog"),
   categoryManageForm: $("#categoryManageForm"),
+  categorySortMode: $("#categorySortMode"),
+  categorySortHelp: $("#categorySortHelp"),
   categoryManageList: $("#categoryManageList"),
   categoryDeleteDialog: $("#categoryDeleteDialog"),
   categoryDeleteForm: $("#categoryDeleteForm"),
@@ -309,8 +320,13 @@ function bindEvents() {
   els.exportButton.addEventListener("click", exportLibrary);
   els.importInput.addEventListener("change", importLibrary);
   els.categoryManageButton.addEventListener("click", openCategoryManageDialog);
+  els.categorySortMode?.addEventListener("change", handleCategorySortModeChange);
   els.categoryManageForm.addEventListener("submit", handleCategoryManageSubmit);
   els.categoryManageList.addEventListener("click", handleCategoryManageAction);
+  els.categoryManageList.addEventListener("dragstart", handleCategoryDragStart);
+  els.categoryManageList.addEventListener("dragover", handleCategoryDragOver);
+  els.categoryManageList.addEventListener("drop", handleCategoryDrop);
+  els.categoryManageList.addEventListener("dragend", handleCategoryDragEnd);
   els.categoryDeleteForm.addEventListener("submit", handleCategoryDeleteSubmit);
   els.deleteModeMove.addEventListener("change", updateDeleteCategoryModeUI);
   els.deleteModeDeleteItems.addEventListener("change", updateDeleteCategoryModeUI);
@@ -742,7 +758,7 @@ function renderFilterState() {
   els.categoryFilter.innerHTML = "";
   const allCategoryOption = new Option("모든 카테고리", "all");
   els.categoryFilter.add(allCategoryOption);
-  state.categories.forEach((category) => els.categoryFilter.add(new Option(category.name, category.id)));
+  getOrderedCategories().forEach((category) => els.categoryFilter.add(new Option(category.name, category.id)));
   els.categoryFilter.value = state.categoryFilter;
   els.typeFilter.value = state.typeFilter || "all";
 }
@@ -1118,6 +1134,28 @@ function loadPageSize() {
 function savePageSize(size) {
   const normalized = PAGE_SIZE_OPTIONS.includes(size) ? size : DEFAULT_PAGE_SIZE;
   localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(normalized));
+}
+
+function loadCategorySortMode() {
+  try {
+    return normalizeCategorySortMode(localStorage.getItem(CATEGORY_SORT_STORAGE_KEY));
+  } catch {
+    return "custom";
+  }
+}
+
+function saveCategorySortMode(mode) {
+  localStorage.setItem(CATEGORY_SORT_STORAGE_KEY, normalizeCategorySortMode(mode));
+}
+
+function normalizeCategorySortMode(mode) {
+  return CATEGORY_SORT_MODES.includes(mode) ? mode : "custom";
+}
+
+function setCategorySortMode(mode) {
+  categorySortMode = normalizeCategorySortMode(mode);
+  saveCategorySortMode(categorySortMode);
+  updateCategorySortUI();
 }
 
 function parseYoutubeLinks(text) {
@@ -2014,6 +2052,7 @@ function exportLibrary() {
 }
 
 function buildFullExportPayload() {
+  ensureLibraryShape();
   return {
     version: IMPORT_VERSION,
     exportedAt: new Date().toISOString(),
@@ -2038,6 +2077,7 @@ function downloadJsonFile(payload, fileName) {
 
 function openCategoryManageDialog() {
   ensureLibraryShape();
+  updateCategorySortUI();
   renderCategoryManageList();
   openDialog(els.categoryManageDialog);
 }
@@ -2047,14 +2087,42 @@ function handleCategoryManageSubmit(event) {
   closeDialog(els.categoryManageDialog);
 }
 
+function handleCategorySortModeChange() {
+  setCategorySortMode(els.categorySortMode.value);
+  render();
+  renderCategoryManageList();
+}
+
+function updateCategorySortUI() {
+  if (!els.categorySortMode) return;
+  els.categorySortMode.value = categorySortMode;
+  if (!els.categorySortHelp) return;
+  const messages = {
+    custom: "직접정렬에서는 위/아래 버튼으로 원하는 순서를 만들 수 있습니다.",
+    name: "카테고리명이 가나다/알파벳 순서로 표시됩니다.",
+    created: "카테고리를 추가한 순서대로 표시됩니다."
+  };
+  els.categorySortHelp.textContent = messages[categorySortMode] || messages.custom;
+}
+
 function renderCategoryManageList() {
   els.categoryManageList.innerHTML = "";
-  state.categories.forEach((category) => {
+  const orderedCategories = getOrderedCategories();
+  const canManuallySort = categorySortMode === "custom";
+
+  orderedCategories.forEach((category, index) => {
     const itemCount = getItemsByCategoryId(category.id).length;
     const deleteState = canDeleteCategory(category.id);
     const row = document.createElement("div");
     row.className = "category-manage-row";
     row.dataset.categoryId = category.id;
+    row.draggable = canManuallySort;
+
+    const dragHandle = document.createElement("div");
+    dragHandle.className = "category-drag-handle";
+    dragHandle.textContent = "☰";
+    dragHandle.title = canManuallySort ? "직접정렬용 이동 손잡이" : "직접정렬 모드에서 사용할 수 있습니다.";
+    dragHandle.setAttribute("aria-hidden", "true");
 
     const label = document.createElement("label");
     label.className = "category-name-field";
@@ -2079,6 +2147,26 @@ function renderCategoryManageList() {
 
     const actions = document.createElement("div");
     actions.className = "category-row-actions";
+
+    const moveUpButton = document.createElement("button");
+    moveUpButton.type = "button";
+    moveUpButton.className = "secondary-button";
+    moveUpButton.dataset.action = "move-category-up";
+    moveUpButton.textContent = "위";
+    moveUpButton.setAttribute("aria-label", `${category.name} 카테고리 위로 이동`);
+    moveUpButton.disabled = !canManuallySort || index === 0;
+    if (!canManuallySort) moveUpButton.title = "직접정렬 모드에서 사용할 수 있습니다.";
+
+    const moveDownButton = document.createElement("button");
+    moveDownButton.type = "button";
+    moveDownButton.className = "secondary-button";
+    moveDownButton.dataset.action = "move-category-down";
+    moveDownButton.textContent = "아래";
+    moveDownButton.setAttribute("aria-label", `${category.name} 카테고리 아래로 이동`);
+    moveDownButton.disabled = !canManuallySort || index === orderedCategories.length - 1;
+    if (!canManuallySort) moveDownButton.title = "직접정렬 모드에서 사용할 수 있습니다.";
+
+    actions.append(moveUpButton, moveDownButton);
     actions.append(saveButton);
 
     const deleteButton = document.createElement("button");
@@ -2095,8 +2183,86 @@ function renderCategoryManageList() {
     }
     actions.append(deleteButton);
 
-    row.append(label, count, actions);
+    row.append(dragHandle, label, count, actions);
     els.categoryManageList.append(row);
+  });
+}
+
+function moveCategory(categoryId, direction) {
+  if (categorySortMode !== "custom") {
+    showToast("직접정렬 모드에서 순서를 바꿀 수 있어요.");
+    return;
+  }
+
+  const ordered = getOrderedCategories({ mode: "custom" });
+  const index = ordered.findIndex((category) => category.id === categoryId);
+  if (index < 0) return;
+
+  const nextIndex = direction === "up" ? index - 1 : index + 1;
+  if (nextIndex < 0 || nextIndex >= ordered.length) return;
+
+  const nextOrdered = [...ordered];
+  const [moved] = nextOrdered.splice(index, 1);
+  nextOrdered.splice(nextIndex, 0, moved);
+  reorderCategoryByIds(nextOrdered.map((category) => category.id));
+}
+
+function reorderCategoryByIds(orderedIds) {
+  const orderMap = new Map(orderedIds.map((id, index) => [id, index]));
+
+  state.categories.forEach((category) => {
+    if (orderMap.has(category.id)) category.order = orderMap.get(category.id);
+  });
+
+  normalizeCategoryOrder();
+  persistAndRender(false);
+  renderCategoryManageList();
+  showToast("카테고리 순서를 변경했어요.");
+}
+
+function handleCategoryDragStart(event) {
+  if (categorySortMode !== "custom") {
+    event.preventDefault();
+    return;
+  }
+  const row = event.target.closest(".category-manage-row");
+  if (!row) return;
+  row.classList.add("is-dragging");
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", row.dataset.categoryId);
+}
+
+function handleCategoryDragOver(event) {
+  if (categorySortMode !== "custom") return;
+  const row = event.target.closest(".category-manage-row");
+  if (!row) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleCategoryDrop(event) {
+  if (categorySortMode !== "custom") return;
+  const targetRow = event.target.closest(".category-manage-row");
+  if (!targetRow) return;
+  event.preventDefault();
+
+  const draggedId = event.dataTransfer.getData("text/plain");
+  const targetId = targetRow.dataset.categoryId;
+  if (!draggedId || !targetId || draggedId === targetId) return;
+
+  const orderedIds = getOrderedCategories({ mode: "custom" }).map((category) => category.id);
+  const fromIndex = orderedIds.indexOf(draggedId);
+  const toIndex = orderedIds.indexOf(targetId);
+  if (fromIndex < 0 || toIndex < 0) return;
+
+  orderedIds.splice(fromIndex, 1);
+  orderedIds.splice(toIndex, 0, draggedId);
+  reorderCategoryByIds(orderedIds);
+}
+
+function handleCategoryDragEnd() {
+  $$(".category-manage-row.is-dragging", els.categoryManageList).forEach((row) => {
+    row.classList.remove("is-dragging");
   });
 }
 
@@ -2108,6 +2274,16 @@ function handleCategoryManageAction(event) {
 
   if (button.dataset.action === "rename-category") {
     renameCategoryFromRow(row);
+    return;
+  }
+
+  if (button.dataset.action === "move-category-up") {
+    moveCategory(row.dataset.categoryId, "up");
+    return;
+  }
+
+  if (button.dataset.action === "move-category-down") {
+    moveCategory(row.dataset.categoryId, "down");
     return;
   }
 
@@ -2213,7 +2389,7 @@ function closeDeleteCategoryDialog() {
 
 function renderDeleteMoveTargets(categoryId) {
   els.deleteMoveTargetSelect.innerHTML = "";
-  state.categories
+  getOrderedCategories()
     .filter((category) => category.id !== categoryId)
     .forEach((category) => {
       const count = getItemsByCategoryId(category.id).length;
@@ -2341,6 +2517,7 @@ function confirmDeleteCategory() {
 function removeCategoryById(categoryId) {
   state.categories = state.categories.filter((category) => category.id !== categoryId);
   if (!state.categories.length) state.categories.push(createDefaultCategory());
+  normalizeCategoryOrder();
 }
 
 function repairCategoryReferencesAfterDelete(deletedCategoryId, preferredCategoryId = "") {
@@ -2440,7 +2617,7 @@ function openCategoryShareDialog() {
 
 function renderCategoryShareOptions() {
   els.shareCategorySelect.innerHTML = "";
-  state.categories.forEach((category) => {
+  getOrderedCategories().forEach((category) => {
     const count = getItemsByCategory(category.id).length;
     els.shareCategorySelect.add(new Option(`${category.name} (${count}개)`, category.id));
   });
@@ -2514,7 +2691,9 @@ function buildCategorySharePayload() {
       {
         id: sharedCategoryId,
         name: category.name,
-        slots
+        slots,
+        createdAt: category.createdAt || new Date().toISOString(),
+        order: Number.isFinite(Number(category.order)) ? Number(category.order) : 0
       }
     ],
     items
@@ -2655,6 +2834,7 @@ async function importLibrary(event) {
     });
 
     ensureLibraryShape();
+    normalizeCategoryOrder();
     if (added > 0) resetToFirstPage();
     persistAndRender();
     showToast(isCategoryShare && sharedCategoryName
@@ -2717,18 +2897,20 @@ function ensureCategoryOptions() {
 
 function renderSaveCategoryOptions() {
   const current = els.categoryInput.value;
+  const orderedCategories = getOrderedCategories();
   els.categoryInput.innerHTML = "";
-  state.categories.forEach((category) => els.categoryInput.add(new Option(category.name, category.id)));
+  orderedCategories.forEach((category) => els.categoryInput.add(new Option(category.name, category.id)));
   els.categoryInput.value = getCategory(current)
     ? current
-    : state.categories[0].id;
+    : orderedCategories[0].id;
 }
 
 function renderEditCategoryOptions() {
   const current = els.editCategory.value;
+  const orderedCategories = getOrderedCategories();
   els.editCategory.innerHTML = "";
-  state.categories.forEach((category) => els.editCategory.add(new Option(category.name, category.id)));
-  els.editCategory.value = getCategory(current) ? current : state.categories[0].id;
+  orderedCategories.forEach((category) => els.editCategory.add(new Option(category.name, category.id)));
+  els.editCategory.value = getCategory(current) ? current : orderedCategories[0].id;
 }
 
 function renderSlotOptions(categorySelect, slotSelect, preferredSlot = slotSelect.value) {
@@ -2751,21 +2933,16 @@ function ensureLibraryShape() {
   const seenIds = new Set();
   const rawCategories = Array.isArray(state.categories) ? state.categories : [];
 
-  rawCategories.forEach((raw) => {
-    const name = cleanLabel(typeof raw === "string" ? raw : raw?.name, "");
-    if (!name) return;
-    let id = String(typeof raw === "object" && raw?.id ? raw.id : "").trim() || createCategoryId();
-    while (seenIds.has(id)) id = createCategoryId();
-    seenIds.add(id);
-    cleanedCategories.push({
-      id,
-      name,
-      slots: cleanSlots(typeof raw === "object" ? raw.slots : [])
-    });
+  rawCategories.forEach((raw, index) => {
+    const category = normalizeCategory(raw, index, seenIds);
+    if (category) cleanedCategories.push(category);
   });
 
   if (!cleanedCategories.some((category) => category.id === DEFAULT_CATEGORY_ID)) {
-    cleanedCategories.unshift(createDefaultCategory());
+    cleanedCategories.unshift(createDefaultCategory({
+      createdAt: makeLegacyCategoryDate(-1),
+      order: -1
+    }));
     seenIds.add(DEFAULT_CATEGORY_ID);
   }
 
@@ -2773,6 +2950,7 @@ function ensureLibraryShape() {
     ...category,
     slots: category.slots.length ? category.slots : [DEFAULT_SLOT]
   }));
+  normalizeCategoryOrder();
 
   state.items.forEach((item) => {
     item.type = normalizeItemType(item);
@@ -2817,7 +2995,9 @@ function mergeImportedCategory(raw) {
     category = {
       id: incomingId || createCategoryId(),
       name,
-      slots: []
+      slots: [],
+      createdAt: isValidDateString(raw?.createdAt) ? raw.createdAt : new Date().toISOString(),
+      order: getNextCategoryOrder()
     };
     state.categories.push(category);
   }
@@ -2836,7 +3016,13 @@ function ensureCategory(name) {
   const cleaned = cleanLabel(name, DEFAULT_CATEGORY_NAME);
   const existing = state.categories.find((category) => category.name === cleaned);
   if (existing) return existing;
-  const category = { id: createCategoryId(), name: cleaned, slots: [DEFAULT_SLOT] };
+  const category = {
+    id: createCategoryId(),
+    name: cleaned,
+    slots: [DEFAULT_SLOT],
+    createdAt: new Date().toISOString(),
+    order: getNextCategoryOrder()
+  };
   state.categories.push(category);
   return category;
 }
@@ -2867,9 +3053,91 @@ function getCategoryName(categoryId) {
   return getCategory(categoryId)?.name || DEFAULT_CATEGORY_NAME;
 }
 
+function getOrderedCategories(options = {}) {
+  const mode = normalizeCategorySortMode(options.mode || categorySortMode);
+  const categories = [...state.categories];
+
+  if (mode === "name") return categories.sort(compareCategoriesByName);
+  if (mode === "created") return categories.sort(compareCategoriesByCreatedAt);
+  return categories.sort(compareCategoriesByOrder);
+}
+
+function compareCategoriesByName(a, b) {
+  const primary = String(a.name || "").localeCompare(String(b.name || ""), "ko-KR", {
+    numeric: true,
+    sensitivity: "base"
+  });
+  if (primary !== 0) return primary;
+  return compareCategoriesByOrder(a, b);
+}
+
+function compareCategoriesByCreatedAt(a, b) {
+  const timeA = Date.parse(a.createdAt || "") || 0;
+  const timeB = Date.parse(b.createdAt || "") || 0;
+  if (timeA !== timeB) return timeA - timeB;
+  return compareCategoriesByOrder(a, b);
+}
+
+function compareCategoriesByOrder(a, b) {
+  const orderA = Number.isFinite(Number(a.order)) ? Number(a.order) : 0;
+  const orderB = Number.isFinite(Number(b.order)) ? Number(b.order) : 0;
+  if (orderA !== orderB) return orderA - orderB;
+
+  return String(a.name || "").localeCompare(String(b.name || ""), "ko-KR", {
+    numeric: true,
+    sensitivity: "base"
+  });
+}
+
+function normalizeCategoryOrder() {
+  state.categories = [...state.categories].sort(compareCategoriesByOrder);
+  state.categories.forEach((category, index) => {
+    category.order = index;
+  });
+}
+
+function getNextCategoryOrder() {
+  if (!state.categories.length) return 0;
+  return Math.max(...state.categories.map((category) =>
+    Number.isFinite(Number(category.order)) ? Number(category.order) : 0
+  )) + 1;
+}
+
+function normalizeCategory(raw, index, seenIds = new Set()) {
+  const source = raw && typeof raw === "object" ? raw : {};
+  const name = cleanLabel(typeof raw === "string" ? raw : source.name, "");
+  if (!name) return null;
+
+  let id = String(source.id || "").trim();
+  if (!id) {
+    id = createCategoryId();
+    while (seenIds.has(id)) id = createCategoryId();
+  } else if (seenIds.has(id)) {
+    id = createCategoryId();
+  }
+  seenIds.add(id);
+
+  return {
+    id,
+    name,
+    slots: normalizeSlots(source.slots),
+    createdAt: isValidDateString(source.createdAt) ? source.createdAt : makeLegacyCategoryDate(index),
+    order: Number.isFinite(Number(source.order)) ? Number(source.order) : index
+  };
+}
+
+function makeLegacyCategoryDate(index) {
+  const base = Date.UTC(2020, 0, 1, 0, 0, 0);
+  return new Date(base + index * 1000).toISOString();
+}
+
+function isValidDateString(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
 function getVisibleSlots() {
   const categories = state.categoryFilter === "all"
-    ? state.categories
+    ? getOrderedCategories()
     : state.categories.filter((category) => category.id === state.categoryFilter);
   return [...new Set(categories.flatMap((category) => category.slots || []))]
     .filter(Boolean)
@@ -2900,8 +3168,14 @@ function cleanMetadataText(value, maxLength = 200) {
   return value.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, maxLength);
 }
 
-function createDefaultCategory() {
-  return { id: DEFAULT_CATEGORY_ID, name: DEFAULT_CATEGORY_NAME, slots: [DEFAULT_SLOT] };
+function createDefaultCategory(overrides = {}) {
+  return {
+    id: DEFAULT_CATEGORY_ID,
+    name: DEFAULT_CATEGORY_NAME,
+    slots: [DEFAULT_SLOT],
+    createdAt: overrides.createdAt || makeLegacyCategoryDate(0),
+    order: Number.isFinite(Number(overrides.order)) ? Number(overrides.order) : 0
+  };
 }
 
 function createCategoryId() {

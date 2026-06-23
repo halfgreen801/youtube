@@ -1193,9 +1193,18 @@ label.import-button:focus-within {
   padding-right: 2px;
 }
 
+.category-sort-panel {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-strong);
+}
+
 .category-manage-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
   align-items: end;
   gap: 10px;
   min-width: 0;
@@ -1203,6 +1212,24 @@ label.import-button:focus-within {
   border-radius: var(--radius);
   padding: 12px;
   background: var(--surface-strong);
+}
+
+.category-drag-handle {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  min-height: 40px;
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.category-drag-handle:active {
+  cursor: grabbing;
+}
+
+.category-manage-row.is-dragging {
+  opacity: 0.55;
 }
 
 .category-row-actions {
@@ -1547,6 +1574,14 @@ label.import-button:focus-within {
   .category-manage-row,
   .category-manage-actions {
     grid-template-columns: 1fr;
+  }
+
+  .category-sort-panel {
+    padding: 10px;
+  }
+
+  .category-drag-handle {
+    display: none;
   }
 
   .category-row-actions {

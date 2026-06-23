@@ -322,6 +322,21 @@
           카테고리 이름을 바꿔도 저장된 영상 목록은 유지됩니다.
         </p>
 
+        <div class="category-sort-panel">
+          <label class="field compact-field">
+            <span>카테고리 정렬</span>
+            <select id="categorySortMode">
+              <option value="custom">직접정렬</option>
+              <option value="name">이름순</option>
+              <option value="created">추가순</option>
+            </select>
+          </label>
+
+          <p class="field-help" id="categorySortHelp">
+            직접정렬에서는 위/아래 버튼으로 원하는 순서를 만들 수 있습니다.
+          </p>
+        </div>
+
         <div class="category-manage-list" id="categoryManageList"></div>
 
         <div class="dialog-actions category-manage-actions">
