@@ -55,12 +55,21 @@
 
               <div class="form-grid">
                 <label>
+                  영상 유형
+                  <select id="typeInput">
+                    <option value="auto">자동 인식</option>
+                    <option value="short">숏츠</option>
+                    <option value="video">롱폼</option>
+                  </select>
+                  <small class="field-help" id="typeInputHelp">/shorts/ 링크는 숏츠로, 일반 watch 링크는 롱폼으로 자동 인식합니다.</small>
+                </label>
+
+                <label>
                   카테고리
                   <div class="control-row">
                     <select id="categoryInput"></select>
                     <button class="icon-button" id="newCategoryButton" type="button" title="카테고리 추가" aria-label="카테고리 추가">+</button>
                   </div>
-                  <small class="auto-category-hint">자동 분류를 선택하면 /shorts/ 링크는 숏폼, watch 링크는 일반으로 저장됩니다.</small>
                 </label>
 
                 <label>
@@ -89,7 +98,7 @@
 
             <nav class="filter-list" id="viewFilters" aria-label="상태 필터">
               <button class="filter-button active" type="button" data-view="all">전체</button>
-              <button class="filter-button" type="button" data-view="video">영상</button>
+              <button class="filter-button" type="button" data-view="video">롱폼</button>
               <button class="filter-button" type="button" data-view="short">숏츠</button>
               <button class="filter-button" type="button" data-view="queue">볼 예정</button>
               <button class="filter-button" type="button" data-view="done">봤음</button>
@@ -99,6 +108,15 @@
             <label class="select-label">
               카테고리 보기
               <select id="categoryFilter"></select>
+            </label>
+
+            <label class="select-label compact-field">
+              영상 유형
+              <select id="typeFilter">
+                <option value="all">전체</option>
+                <option value="short">숏츠</option>
+                <option value="video">롱폼</option>
+              </select>
             </label>
 
             <div class="slot-cloud" id="slotCloud" aria-label="분류 칸 필터"></div>
@@ -170,7 +188,7 @@
           <section class="player-panel" id="playerPanel" hidden aria-label="재생">
             <div class="player-heading">
               <div>
-                <span id="playerType" class="type-badge">영상</span>
+                <span id="playerType" class="type-badge">롱폼</span>
                 <h2 id="playerTitle">선택한 영상</h2>
               </div>
               <div class="player-actions">
@@ -223,8 +241,8 @@
         <label class="field">
           <span>영상 유형</span>
           <select id="editType">
-            <option value="video">일반 영상</option>
-            <option value="short">숏폼</option>
+            <option value="video">롱폼</option>
+            <option value="short">숏츠</option>
           </select>
         </label>
 
@@ -273,12 +291,7 @@
 
         <div class="category-manage-list" id="categoryManageList"></div>
 
-        <p class="type-select-help">
-          기존 목록 정리는 실행 전에 이 기기에 백업을 남깁니다. 분류 칸은 그대로 유지합니다.
-        </p>
-
         <div class="dialog-actions category-manage-actions">
-          <button class="secondary-button" id="classifyExistingButton" type="button">기존 목록 숏폼/일반으로 정리</button>
           <span></span>
           <button class="secondary-button" value="cancel" type="submit">닫기</button>
         </div>

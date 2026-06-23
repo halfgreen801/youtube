@@ -1,13 +1,9 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.06.23.3";
+const APP_VERSION = "2026.06.23.4";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const IMPORT_VERSION = 2;
 const CATEGORY_SHARE_VERSION = 3;
-const AUTO_CATEGORY_VALUE = "__auto_type__";
-const TYPE_CATEGORY_SHORT_ID = "type-short";
-const TYPE_CATEGORY_VIDEO_ID = "type-video";
-const AUTO_CLASSIFY_BACKUP_PREFIX = "gaegolTubeBeforeAutoClassify:";
 const DEFAULT_CATEGORY_ID = "general";
 const DEFAULT_CATEGORY_NAME = "기본";
 const DEFAULT_SLOT = "기본";
@@ -66,6 +62,7 @@ const initialState = {
   categories: [{ id: DEFAULT_CATEGORY_ID, name: DEFAULT_CATEGORY_NAME, slots: [DEFAULT_SLOT] }],
   items: [],
   view: "all",
+  typeFilter: "all",
   categoryFilter: "all",
   slotFilter: "all",
   query: "",
@@ -102,6 +99,8 @@ const els = {
   saveForm: $("#saveForm"),
   urlInput: $("#urlInput"),
   titleInput: $("#titleInput"),
+  typeInput: $("#typeInput"),
+  typeInputHelp: $("#typeInputHelp"),
   categoryInput: $("#categoryInput"),
   slotInput: $("#slotInput"),
   newCategoryButton: $("#newCategoryButton"),
@@ -111,6 +110,7 @@ const els = {
   totalCount: $("#totalCount"),
   viewFilters: $("#viewFilters"),
   categoryFilter: $("#categoryFilter"),
+  typeFilter: $("#typeFilter"),
   slotCloud: $("#slotCloud"),
   searchInput: $("#searchInput"),
   sortInput: $("#sortInput"),
@@ -133,7 +133,6 @@ const els = {
   categoryManageDialog: $("#categoryManageDialog"),
   categoryManageForm: $("#categoryManageForm"),
   categoryManageList: $("#categoryManageList"),
-  classifyExistingButton: $("#classifyExistingButton"),
   migrationButton: $("#migrationButton"),
   migrationDialog: $("#migrationDialog"),
   migrationForm: $("#migrationForm"),
@@ -201,6 +200,7 @@ function init() {
   ensureLibraryShape();
   ensureCategoryOptions();
   bindEvents();
+  updateTypeInputHelp();
   wireThemeSettings();
   render();
   initSync();
@@ -217,6 +217,11 @@ function bindEvents() {
     state.slotFilter = "all";
     persistAndRender();
   });
+  els.typeFilter.addEventListener("change", () => {
+    state.typeFilter = els.typeFilter.value;
+    persistAndRender();
+  });
+  els.typeInput.addEventListener("change", updateTypeInputHelp);
   els.categoryInput.addEventListener("change", () => {
     renderSlotOptions(els.categoryInput, els.slotInput);
   });
@@ -243,7 +248,6 @@ function bindEvents() {
   els.categoryManageButton.addEventListener("click", openCategoryManageDialog);
   els.categoryManageForm.addEventListener("submit", handleCategoryManageSubmit);
   els.categoryManageList.addEventListener("click", handleCategoryManageAction);
-  els.classifyExistingButton.addEventListener("click", classifyExistingByType);
   els.migrationButton.addEventListener("click", openMigrationDialog);
   els.migrationForm.addEventListener("submit", handleMigrationSubmit);
   els.migrationBackupButton.addEventListener("click", exportMigrationBackup);
@@ -371,27 +375,25 @@ function handleSave(event) {
 
   const now = new Date().toISOString();
   const profile = "나";
-  const useAutoCategory = isAutoCategorySelected();
-  const manualCategory = useAutoCategory ? null : getCategory(els.categoryInput.value) || getDefaultCategory();
-  const manualSlot = manualCategory ? ensureCategorySlot(manualCategory.id, els.slotInput.value) : DEFAULT_SLOT;
+  const category = getCategory(els.categoryInput.value) || getDefaultCategory();
+  const slot = ensureCategorySlot(category.id, els.slotInput.value);
+  const selectedTypeMode = getSelectedTypeMode();
   let added = 0;
   let skipped = 0;
 
-  parsed.forEach((video, index) => {
-    const exists = state.items.some((item) => item.videoId === video.videoId && item.type === video.type);
+  parsed.forEach((video) => {
+    const type = resolveSelectedVideoType(video.type);
+    const exists = state.items.some((item) => item.videoId === video.videoId && item.type === type);
     if (exists) {
       skipped += 1;
       return;
     }
 
-    const category = useAutoCategory ? getAutoCategoryForType(video.type) : manualCategory;
-    const slot = useAutoCategory ? DEFAULT_SLOT : manualSlot;
-
     state.items.unshift({
       id: createId(video.videoId),
       videoId: video.videoId,
-      type: video.type,
-      url: video.url,
+      type,
+      url: normalizeYoutubeItemUrl(video.videoId, type),
       title: parsed.length === 1 ? els.titleInput.value.trim() : "",
       author: "",
       note: els.noteInput.value.trim(),
@@ -406,7 +408,7 @@ function handleSave(event) {
     });
     added += 1;
 
-    if (index === 0) {
+    if (added === 1) {
       state.selectedId = state.items[0].id;
     }
   });
@@ -417,18 +419,49 @@ function handleSave(event) {
 
   if (added > 0) {
     els.saveForm.reset();
-    els.categoryInput.value = useAutoCategory ? AUTO_CATEGORY_VALUE : manualCategory.id;
-    renderSlotOptions(els.categoryInput, els.slotInput, useAutoCategory ? DEFAULT_SLOT : manualSlot);
+    els.typeInput.value = selectedTypeMode;
+    els.categoryInput.value = category.id;
+    renderSlotOptions(els.categoryInput, els.slotInput, slot);
+    updateTypeInputHelp();
   }
 
+  const typeMessage = getSaveTypeToastSuffix(selectedTypeMode);
   const message = skipped
-    ? useAutoCategory
-      ? `${added}개 저장, ${skipped}개는 이미 있었어요. 숏폼/일반으로 자동 분류했어요.`
-      : `${added}개 저장, ${skipped}개는 이미 있었어요.`
-    : useAutoCategory
-      ? `${added}개 저장했어요. 숏폼/일반으로 자동 분류했어요.`
-      : `${added}개 저장했어요.`;
+    ? `${added}개 저장, ${skipped}개는 이미 있었어요. ${typeMessage}`
+    : `${added}개 저장했어요. ${typeMessage}`;
   showToast(message);
+}
+
+function getSelectedTypeMode() {
+  const selected = els.typeInput?.value || "auto";
+  return ["auto", "short", "video"].includes(selected) ? selected : "auto";
+}
+
+function resolveSelectedVideoType(detectedType) {
+  const selected = getSelectedTypeMode();
+  if (selected === "short") return "short";
+  if (selected === "video") return "video";
+  return detectedType === "short" ? "short" : "video";
+}
+
+function getSaveTypeToastSuffix(typeMode) {
+  if (typeMode === "short") return "영상 유형은 숏츠로 저장했어요.";
+  if (typeMode === "video") return "영상 유형은 롱폼으로 저장했어요.";
+  return "영상 유형은 자동 인식했어요.";
+}
+
+function updateTypeInputHelp() {
+  if (!els.typeInputHelp) return;
+  const selected = getSelectedTypeMode();
+  if (selected === "short") {
+    els.typeInputHelp.textContent = "붙여넣은 링크 형태와 관계없이 숏츠로 저장합니다.";
+    return;
+  }
+  if (selected === "video") {
+    els.typeInputHelp.textContent = "붙여넣은 링크 형태와 관계없이 롱폼으로 저장합니다.";
+    return;
+  }
+  els.typeInputHelp.textContent = "/shorts/ 링크는 숏츠로, 일반 watch 링크는 롱폼으로 자동 인식합니다.";
 }
 
 async function pasteFromClipboard() {
@@ -498,11 +531,6 @@ function addCategory(target) {
 }
 
 function addSlot(target) {
-  if (target === "save" && isAutoCategorySelected()) {
-    showToast("자동 분류에서는 기본 칸을 사용합니다. 분류 칸을 추가하려면 카테고리를 직접 선택하세요.");
-    return;
-  }
-
   const categorySelect = target === "edit" ? els.editCategory : els.categoryInput;
   const slotSelect = target === "edit" ? els.editSlot : els.slotInput;
   const category = getCategory(categorySelect.value) || getDefaultCategory();
@@ -554,12 +582,14 @@ function saveEdit(event) {
     return;
   }
 
-  item.title = els.editTitle.value.trim() || fallbackTitle(item);
+  const nextTitle = els.editTitle.value.trim();
+  const shouldUseFallbackTitle = !nextTitle || isGeneratedFallbackTitle(nextTitle, item.videoId);
   item.profile = item.profile || "나";
   item.categoryId = category.id;
   item.slot = slot;
   item.type = nextType;
   item.url = normalizeYoutubeItemUrl(item.videoId, nextType);
+  item.title = shouldUseFallbackTitle ? fallbackTitle(item) : nextTitle;
   item.status = els.editStatus.value;
   item.tags = Array.isArray(item.tags) ? item.tags : [];
   item.note = els.editNote.value.trim();
@@ -621,6 +651,7 @@ function renderFilterState() {
   els.categoryFilter.add(allCategoryOption);
   state.categories.forEach((category) => els.categoryFilter.add(new Option(category.name, category.id)));
   els.categoryFilter.value = state.categoryFilter;
+  els.typeFilter.value = state.typeFilter || "all";
 }
 
 function renderSlotFilters() {
@@ -665,8 +696,8 @@ function renderCards() {
     $(".duration-chip", node).textContent = item.status === "done" ? "봤음" : "볼 예정";
 
     const typeBadge = $(".type-badge", node);
-    typeBadge.textContent = item.type === "short" ? "숏츠" : "영상";
-    typeBadge.classList.add(item.type === "short" ? "short" : "video");
+    typeBadge.textContent = getTypeLabel(item.type);
+    typeBadge.classList.add(getTypeClass(item.type));
 
     $(".category-badge", node).textContent = getCategoryName(item.categoryId);
     $(".slot-badge", node).textContent = item.slot || DEFAULT_SLOT;
@@ -700,8 +731,8 @@ function renderPlayer() {
 
   els.playerPanel.hidden = false;
   els.playerTitle.textContent = displayTitle(item);
-  els.playerType.textContent = item.type === "short" ? "숏츠" : "영상";
-  els.playerType.className = `type-badge ${item.type === "short" ? "short" : "video"}`;
+  els.playerType.textContent = getTypeLabel(item.type);
+  els.playerType.className = `type-badge ${getTypeClass(item.type)}`;
   els.openPlayerLink.href = item.url;
   const embed = `https://www.youtube.com/embed/${item.videoId}?autoplay=1&playsinline=1&rel=0`;
   if (els.playerFrame.src !== embed) {
@@ -718,6 +749,8 @@ function getFilteredItems() {
       if (state.view === "queue" && item.status === "done") return false;
       if (state.view === "done" && item.status !== "done") return false;
       if (state.view === "favorite" && !item.favorite) return false;
+      if (state.typeFilter === "short" && item.type !== "short") return false;
+      if (state.typeFilter === "video" && item.type !== "video") return false;
       if (state.categoryFilter !== "all" && item.categoryId !== state.categoryFilter) return false;
       if (state.slotFilter !== "all" && item.slot !== state.slotFilter) return false;
 
@@ -794,7 +827,7 @@ function parseYoutubeUrl(rawUrl) {
   videoId = videoId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
 
-  const type = detectYoutubeType(url, parts);
+  const type = detectYoutubeTypeFromUrl(url);
 
   return {
     videoId,
@@ -803,7 +836,8 @@ function parseYoutubeUrl(rawUrl) {
   };
 }
 
-function detectYoutubeType(_url, parts) {
+function detectYoutubeTypeFromUrl(url) {
+  const parts = url.pathname.split("/").filter(Boolean);
   return parts[0] === "shorts" ? "short" : "video";
 }
 
@@ -811,6 +845,13 @@ function normalizeYoutubeItemUrl(videoId, type) {
   return type === "short"
     ? `https://www.youtube.com/shorts/${videoId}`
     : `https://www.youtube.com/watch?v=${videoId}`;
+}
+
+function normalizeItemType(item) {
+  if (item?.type === "short") return "short";
+  if (item?.type === "video") return "video";
+  if (typeof item?.url === "string" && item.url.includes("/shorts/")) return "short";
+  return "video";
 }
 
 async function hydrateMissingTitles() {
@@ -1401,6 +1442,7 @@ function serializeStateForCloud() {
     categories: state.categories,
     items: state.items,
     view: state.view,
+    typeFilter: state.typeFilter,
     categoryFilter: state.categoryFilter,
     slotFilter: state.slotFilter,
     query: state.query,
@@ -1613,36 +1655,6 @@ function renameCategoryFromRow(row) {
   showToast("카테고리 이름을 수정했어요.");
 }
 
-function classifyExistingByType() {
-  if (!state.items.length) {
-    showToast("정리할 목록이 없습니다.");
-    return;
-  }
-
-  const ok = window.confirm("현재 목록을 숏폼/일반 카테고리로 정리할까요? 실행 전 이 기기에 백업을 남기고, 기존 분류 칸은 그대로 유지합니다.");
-  if (!ok) return;
-
-  const backedUpAt = new Date().toISOString();
-  localStorage.setItem(`${AUTO_CLASSIFY_BACKUP_PREFIX}${backedUpAt}`, JSON.stringify({
-    reason: "auto-classify",
-    backedUpAt,
-    state: buildFullExportPayload()
-  }));
-
-  ensureTypeCategories();
-  const now = new Date().toISOString();
-  state.items.forEach((item) => {
-    const category = getAutoCategoryForType(item.type === "short" ? "short" : "video");
-    item.categoryId = category.id;
-    item.slot = item.slot || DEFAULT_SLOT;
-    item.updatedAt = now;
-  });
-
-  persistAndRender();
-  renderCategoryManageList();
-  showToast("기존 목록을 숏폼/일반으로 정리했어요.");
-}
-
 function openMigrationDialog() {
   renderMigrationDialog();
   openDialog(els.migrationDialog);
@@ -1809,12 +1821,13 @@ function buildCategorySharePayload() {
 function sanitizeSharedItem(item, sharedCategoryId, options) {
   const now = new Date().toISOString();
   const slot = options.includeSlot ? item.slot || DEFAULT_SLOT : DEFAULT_SLOT;
+  const type = normalizeItemType(item);
 
   return {
     id: createId(item.videoId),
     videoId: item.videoId,
-    type: item.type === "short" ? "short" : "video",
-    url: item.url,
+    type,
+    url: normalizeYoutubeItemUrl(item.videoId, type),
     title: item.title || "",
     author: item.author || "",
     note: options.includeNotes ? item.note || "" : "",
@@ -1961,7 +1974,10 @@ function cleanImportedItem(raw, categoryIdMap = new Map()) {
     categoryId = categoryName ? ensureCategory(categoryName).id : DEFAULT_CATEGORY_ID;
   }
   const slot = ensureCategorySlot(categoryId, raw.slot || raw.section || raw.group || DEFAULT_SLOT);
-  const type = raw.type === "short" ? "short" : parsed.type;
+  const type = normalizeItemType({
+    type: raw.type,
+    url: raw.url || parsed.url
+  });
 
   return {
     id: raw.id || createId(parsed.videoId),
@@ -1991,13 +2007,12 @@ function ensureCategoryOptions() {
 }
 
 function renderSaveCategoryOptions() {
-  const current = els.categoryInput.value || AUTO_CATEGORY_VALUE;
+  const current = els.categoryInput.value;
   els.categoryInput.innerHTML = "";
-  els.categoryInput.add(new Option("자동 분류: 숏폼/일반", AUTO_CATEGORY_VALUE));
   state.categories.forEach((category) => els.categoryInput.add(new Option(category.name, category.id)));
-  els.categoryInput.value = current === AUTO_CATEGORY_VALUE || getCategory(current)
+  els.categoryInput.value = getCategory(current)
     ? current
-    : AUTO_CATEGORY_VALUE;
+    : state.categories[0].id;
 }
 
 function renderEditCategoryOptions() {
@@ -2008,14 +2023,6 @@ function renderEditCategoryOptions() {
 }
 
 function renderSlotOptions(categorySelect, slotSelect, preferredSlot = slotSelect.value) {
-  if (categorySelect === els.categoryInput && categorySelect.value === AUTO_CATEGORY_VALUE) {
-    slotSelect.innerHTML = "";
-    slotSelect.add(new Option("자동 분류 시 기본 칸 사용", DEFAULT_SLOT));
-    slotSelect.value = DEFAULT_SLOT;
-    slotSelect.disabled = true;
-    return DEFAULT_SLOT;
-  }
-
   slotSelect.disabled = false;
   const category = getCategory(categorySelect.value) || getDefaultCategory();
   categorySelect.value = category.id;
@@ -2059,6 +2066,14 @@ function ensureLibraryShape() {
   }));
 
   state.items.forEach((item) => {
+    item.type = normalizeItemType(item);
+    if (item.videoId) {
+      item.videoId = String(item.videoId).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
+      item.url = normalizeYoutubeItemUrl(item.videoId, item.type);
+      if (isGeneratedFallbackTitle(item.title, item.videoId)) {
+        item.title = fallbackTitle(item);
+      }
+    }
     const existingCategory = getCategory(item.categoryId);
     if (!existingCategory) {
       item.categoryId = DEFAULT_CATEGORY_ID;
@@ -2068,6 +2083,7 @@ function ensureLibraryShape() {
 
   if (state.categoryFilter !== "all" && !getCategory(state.categoryFilter)) state.categoryFilter = "all";
   if (!state.slotFilter) state.slotFilter = "all";
+  if (!["all", "short", "video"].includes(state.typeFilter)) state.typeFilter = "all";
   delete state.profileFilter;
   delete state.tagFilter;
   if (!state.view) state.view = "all";
@@ -2107,52 +2123,6 @@ function ensureCategory(name) {
   const category = { id: createCategoryId(), name: cleaned, slots: [DEFAULT_SLOT] };
   state.categories.push(category);
   return category;
-}
-
-function ensureTypeCategories() {
-  ensureSystemCategory(TYPE_CATEGORY_SHORT_ID, "숏폼");
-  ensureSystemCategory(TYPE_CATEGORY_VIDEO_ID, "일반");
-}
-
-function ensureSystemCategory(id, fallbackName) {
-  let category = getCategory(id);
-  if (category) {
-    category.slots = normalizeSlots(category.slots);
-    return category;
-  }
-
-  category = {
-    id,
-    name: makeUniqueCategoryName(fallbackName),
-    slots: [DEFAULT_SLOT]
-  };
-  state.categories.push(category);
-  return category;
-}
-
-function getAutoCategoryForType(type) {
-  ensureTypeCategories();
-  return type === "short"
-    ? getCategory(TYPE_CATEGORY_SHORT_ID)
-    : getCategory(TYPE_CATEGORY_VIDEO_ID);
-}
-
-function isAutoCategorySelected() {
-  return els.categoryInput.value === AUTO_CATEGORY_VALUE;
-}
-
-function makeUniqueCategoryName(value) {
-  const base = cleanLabel(value, DEFAULT_CATEGORY_NAME);
-  if (!state.categories.some((category) => category.name === base)) return base;
-
-  const automatic = cleanLabel(`${base} 자동`, base);
-  if (!state.categories.some((category) => category.name === automatic)) return automatic;
-
-  let index = 2;
-  while (state.categories.some((category) => category.name === `${automatic} ${index}`)) {
-    index += 1;
-  }
-  return `${automatic} ${index}`;
 }
 
 function ensureCategorySlot(categoryId, slotName) {
@@ -2234,7 +2204,22 @@ function displayTitle(item) {
 }
 
 function fallbackTitle(item) {
-  return item.type === "short" ? `YouTube 숏츠 ${item.videoId}` : `YouTube 영상 ${item.videoId}`;
+  return item.type === "short" ? `YouTube 숏츠 ${item.videoId}` : `YouTube 롱폼 ${item.videoId}`;
+}
+
+function isGeneratedFallbackTitle(title, videoId) {
+  const value = String(title || "").trim();
+  return value === `YouTube 숏츠 ${videoId}`
+    || value === `YouTube 롱폼 ${videoId}`
+    || value === `YouTube 영상 ${videoId}`;
+}
+
+function getTypeLabel(type) {
+  return type === "short" ? "숏츠" : "롱폼";
+}
+
+function getTypeClass(type) {
+  return type === "short" ? "type-short" : "type-video";
 }
 
 function normalizeText(value) {

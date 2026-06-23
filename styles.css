@@ -258,6 +258,10 @@ label,
   font-weight: 700;
 }
 
+.compact-field {
+  margin-top: 10px;
+}
+
 input,
 textarea,
 select {
@@ -640,16 +644,18 @@ label.import-button:focus-within {
   max-width: 100%;
 }
 
+.type-badge.type-short,
 .type-badge.short {
   color: #3a1d1d;
   border-color: var(--red);
-  background: var(--red);
+  background: color-mix(in srgb, var(--red) 32%, white);
 }
 
+.type-badge.type-video,
 .type-badge.video {
   color: #1e3156;
   border-color: var(--blue);
-  background: var(--blue);
+  background: color-mix(in srgb, var(--blue) 32%, white);
 }
 
 .category-badge {
@@ -995,15 +1001,14 @@ label.import-button:focus-within {
   white-space: nowrap;
 }
 
-.auto-category-hint,
-.type-select-help {
+.field-help {
   color: var(--muted);
   font-size: 0.88rem;
   line-height: 1.45;
 }
 
 .category-manage-actions {
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 1fr auto;
 }
 
 .update-banner {
