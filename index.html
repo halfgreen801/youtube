@@ -24,6 +24,7 @@
         <div class="top-actions">
           <button class="ghost-button" id="installButton" type="button" title="홈 화면/앱 목록에 추가합니다. 데이터 동기화 기능은 아닙니다." aria-label="홈 화면이나 앱 목록에 추가합니다. 데이터 동기화 기능은 아닙니다." hidden>앱 설치</button>
           <button class="ghost-button" id="themeButton" type="button" title="앱 색상 설정" aria-label="앱 색상 설정 열기">색상 설정</button>
+          <button class="ghost-button" id="categoryShareButton" type="button" title="선택한 카테고리의 목록만 JSON 파일로 내보냅니다." aria-label="선택한 카테고리의 목록만 JSON 파일로 내보내기">카테고리 공유</button>
           <button class="ghost-button" id="exportButton" type="button">내보내기</button>
           <label class="ghost-button import-button">
             가져오기
@@ -236,6 +237,61 @@
           <span></span>
           <button class="secondary-button" value="cancel" type="submit">취소</button>
           <button class="primary-button" id="saveEditButton" value="default" type="submit">저장</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="share-dialog" id="categoryShareDialog">
+      <form method="dialog" id="categoryShareForm">
+        <div class="dialog-heading">
+          <h2>카테고리 공유</h2>
+          <button class="icon-button" value="cancel" type="submit" aria-label="닫기" title="닫기">×</button>
+        </div>
+
+        <p class="dialog-description">
+          선택한 카테고리의 영상 목록만 파일로 내보냅니다. 공유받은 사람은 가져오기로 불러올 수 있습니다.
+        </p>
+
+        <label class="field">
+          <span>공유할 카테고리</span>
+          <select id="shareCategorySelect"></select>
+        </label>
+
+        <p class="share-count" id="shareCategoryCount"></p>
+
+        <fieldset class="share-options">
+          <legend>공유에 포함할 정보</legend>
+
+          <label class="checkbox-line">
+            <input type="checkbox" id="shareIncludeSlot" checked>
+            <span>분류 칸 포함</span>
+          </label>
+
+          <label class="checkbox-line">
+            <input type="checkbox" id="shareIncludeNotes">
+            <span>메모 포함</span>
+          </label>
+
+          <label class="checkbox-line">
+            <input type="checkbox" id="shareIncludeStatus">
+            <span>봤음/볼 예정 상태 포함</span>
+          </label>
+
+          <label class="checkbox-line">
+            <input type="checkbox" id="shareIncludeFavorite">
+            <span>즐겨찾기 여부 포함</span>
+          </label>
+        </fieldset>
+
+        <p class="privacy-note">
+          메모, 봤음 상태, 즐겨찾기 여부는 개인 정보일 수 있습니다. 기본적으로 공유하지 않습니다.
+        </p>
+
+        <div class="dialog-actions share-actions">
+          <button class="secondary-button" value="cancel" type="submit">취소</button>
+          <span></span>
+          <button class="secondary-button" id="nativeShareCategoryButton" type="button" hidden>바로 공유</button>
+          <button class="primary-button" id="downloadCategoryShareButton" type="submit" value="download">공유 파일 만들기</button>
         </div>
       </form>
     </dialog>

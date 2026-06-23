@@ -171,7 +171,8 @@ img {
 .player-panel,
 .edit-dialog,
 .install-dialog,
-.theme-dialog {
+.theme-dialog,
+.share-dialog {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -239,7 +240,8 @@ p {
 .save-form,
 .edit-dialog form,
 .install-dialog form,
-.theme-dialog form {
+.theme-dialog form,
+.share-dialog form {
   display: grid;
   gap: 12px;
 }
@@ -700,14 +702,16 @@ label.import-button:focus-within {
 
 .edit-dialog,
 .install-dialog,
-.theme-dialog {
+.theme-dialog,
+.share-dialog {
   width: min(560px, calc(100vw - 28px));
   padding: 18px;
 }
 
 .edit-dialog::backdrop,
 .install-dialog::backdrop,
-.theme-dialog::backdrop {
+.theme-dialog::backdrop,
+.share-dialog::backdrop {
   background: rgba(13, 21, 20, 0.48);
   backdrop-filter: blur(5px);
 }
@@ -720,6 +724,10 @@ label.import-button:focus-within {
   display: grid;
   grid-template-columns: auto 1fr auto auto;
   margin-top: 4px;
+}
+
+.share-actions {
+  grid-template-columns: auto 1fr auto auto;
 }
 
 .dialog-description {
@@ -805,6 +813,65 @@ label.import-button:focus-within {
   padding: 0 12px;
   color: var(--ink);
   background: var(--accent);
+}
+
+.share-count {
+  min-height: 22px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.share-options {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface-strong);
+}
+
+.share-options legend {
+  padding: 0 6px;
+  color: var(--ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.checkbox-line input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  accent-color: var(--accent-dark);
+}
+
+.checkbox-line span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.privacy-note {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 11px 12px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .toast {
@@ -925,7 +992,8 @@ label.import-button:focus-within {
 
   .edit-dialog,
   .install-dialog,
-  .theme-dialog {
+  .theme-dialog,
+  .share-dialog {
     position: fixed;
     inset: auto 0 0 0;
     width: auto;
@@ -939,7 +1007,8 @@ label.import-button:focus-within {
 
   .edit-dialog form,
   .install-dialog form,
-  .theme-dialog form {
+  .theme-dialog form,
+  .share-dialog form {
     gap: 11px;
   }
 
@@ -954,6 +1023,10 @@ label.import-button:focus-within {
 
   .dialog-actions .danger-button {
     grid-column: 1 / -1;
+  }
+
+  .share-actions {
+    grid-template-columns: 1fr;
   }
 
   .sync-actions,

@@ -1,4 +1,4 @@
-const CACHE_NAME = "tube-vault-shell-v7";
+const CACHE_NAME = "tube-vault-shell-v8";
 const SHELL_FILES = [
   "./",
   "./index.html",

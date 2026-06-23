@@ -2,6 +2,7 @@ const APP_NAME = "개골튜브";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const IMPORT_VERSION = 2;
+const CATEGORY_SHARE_VERSION = 3;
 const DEFAULT_CATEGORY_ID = "general";
 const DEFAULT_CATEGORY_NAME = "기본";
 const DEFAULT_SLOT = "기본";
@@ -120,6 +121,17 @@ const els = {
   installButton: $("#installButton"),
   installDialog: $("#installDialog"),
   themeButton: $("#themeButton"),
+  categoryShareButton: $("#categoryShareButton"),
+  categoryShareDialog: $("#categoryShareDialog"),
+  categoryShareForm: $("#categoryShareForm"),
+  shareCategorySelect: $("#shareCategorySelect"),
+  shareCategoryCount: $("#shareCategoryCount"),
+  shareIncludeNotes: $("#shareIncludeNotes"),
+  shareIncludeStatus: $("#shareIncludeStatus"),
+  shareIncludeFavorite: $("#shareIncludeFavorite"),
+  shareIncludeSlot: $("#shareIncludeSlot"),
+  nativeShareCategoryButton: $("#nativeShareCategoryButton"),
+  downloadCategoryShareButton: $("#downloadCategoryShareButton"),
   themeDialog: $("#themeDialog"),
   themeForm: $("#themeForm"),
   themeInputs: $$("[data-theme-key]"),
@@ -200,6 +212,10 @@ function bindEvents() {
   els.closePlayerButton.addEventListener("click", closePlayer);
   els.exportButton.addEventListener("click", exportLibrary);
   els.importInput.addEventListener("change", importLibrary);
+  els.categoryShareButton.addEventListener("click", openCategoryShareDialog);
+  els.shareCategorySelect.addEventListener("change", updateCategoryShareCount);
+  els.categoryShareForm.addEventListener("submit", handleCategoryShareSubmit);
+  els.nativeShareCategoryButton.addEventListener("click", shareCategoryWithNativeShare);
   els.editForm.addEventListener("submit", saveEdit);
   els.deleteButton.addEventListener("click", deleteEditingItem);
   els.syncAuthForm.addEventListener("submit", handleSyncLogin);
@@ -1366,9 +1382,204 @@ function exportLibrary() {
   const date = new Date().toISOString().slice(0, 10);
   link.href = url;
   link.download = `gaegol-tube-${date}.json`;
+  document.body.append(link);
   link.click();
+  link.remove();
   URL.revokeObjectURL(url);
   showToast("내보내기 파일을 만들었어요.");
+}
+
+function openCategoryShareDialog() {
+  ensureLibraryShape();
+  renderCategoryShareOptions();
+
+  const preferred = state.categoryFilter !== "all" && getCategory(state.categoryFilter)
+    ? state.categoryFilter
+    : state.categories[0]?.id;
+
+  if (preferred) els.shareCategorySelect.value = preferred;
+  updateCategoryShareCount();
+  configureNativeShareButton();
+  els.categoryShareDialog.showModal();
+}
+
+function renderCategoryShareOptions() {
+  els.shareCategorySelect.innerHTML = "";
+  state.categories.forEach((category) => {
+    const count = getItemsByCategory(category.id).length;
+    els.shareCategorySelect.add(new Option(`${category.name} (${count}개)`, category.id));
+  });
+}
+
+function getItemsByCategory(categoryId) {
+  return state.items.filter((item) => item.categoryId === categoryId);
+}
+
+function updateCategoryShareCount() {
+  const categoryId = els.shareCategorySelect.value;
+  const count = getItemsByCategory(categoryId).length;
+  const hasItems = count > 0;
+
+  els.shareCategoryCount.textContent = hasItems
+    ? `이 카테고리에 ${count}개 항목이 있습니다.`
+    : "공유할 항목이 없습니다.";
+  els.downloadCategoryShareButton.disabled = !hasItems;
+  els.nativeShareCategoryButton.disabled = !hasItems;
+}
+
+function handleCategoryShareSubmit(event) {
+  event.preventDefault();
+  if (event.submitter?.value === "cancel") {
+    els.categoryShareDialog.close();
+    return;
+  }
+  downloadCategoryShare();
+}
+
+function buildCategorySharePayload() {
+  const category = getCategory(els.shareCategorySelect.value);
+  if (!category) throw new Error("category missing");
+
+  const includeNotes = els.shareIncludeNotes.checked;
+  const includeStatus = els.shareIncludeStatus.checked;
+  const includeFavorite = els.shareIncludeFavorite.checked;
+  const includeSlot = els.shareIncludeSlot.checked;
+  const sharedCategoryId = `shared-${category.id}`;
+  const items = getItemsByCategory(category.id).map((item) =>
+    sanitizeSharedItem(item, sharedCategoryId, {
+      includeNotes,
+      includeStatus,
+      includeFavorite,
+      includeSlot
+    })
+  );
+
+  if (!items.length) throw new Error("empty category");
+
+  const slots = includeSlot
+    ? [...new Set(items.map((item) => item.slot || DEFAULT_SLOT))]
+    : [DEFAULT_SLOT];
+
+  return {
+    version: CATEGORY_SHARE_VERSION,
+    app: APP_NAME,
+    exportType: "category-share",
+    exportedAt: new Date().toISOString(),
+    source: {
+      categoryId: category.id,
+      categoryName: category.name,
+      itemCount: items.length,
+      includeNotes,
+      includeStatus,
+      includeFavorite,
+      includeSlot
+    },
+    profiles: ["공유"],
+    categories: [
+      {
+        id: sharedCategoryId,
+        name: category.name,
+        slots
+      }
+    ],
+    items
+  };
+}
+
+function sanitizeSharedItem(item, sharedCategoryId, options) {
+  const now = new Date().toISOString();
+  const slot = options.includeSlot ? item.slot || DEFAULT_SLOT : DEFAULT_SLOT;
+
+  return {
+    id: createId(item.videoId),
+    videoId: item.videoId,
+    type: item.type === "short" ? "short" : "video",
+    url: item.url,
+    title: item.title || "",
+    author: item.author || "",
+    note: options.includeNotes ? item.note || "" : "",
+    tags: [],
+    profile: "공유",
+    categoryId: sharedCategoryId,
+    categoryName: getCategoryName(item.categoryId),
+    slot,
+    status: options.includeStatus ? item.status || "queue" : "queue",
+    favorite: options.includeFavorite ? Boolean(item.favorite) : false,
+    createdAt: item.createdAt || now,
+    updatedAt: item.updatedAt || now
+  };
+}
+
+function downloadCategoryShare() {
+  let payload;
+  try {
+    payload = buildCategorySharePayload();
+  } catch {
+    showToast("공유할 항목이 없어요.");
+    return;
+  }
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = makeCategoryShareFileName(payload.source.categoryName);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("카테고리 공유 파일을 만들었어요.");
+}
+
+async function shareCategoryWithNativeShare() {
+  let payload;
+  try {
+    payload = buildCategorySharePayload();
+  } catch {
+    showToast("공유할 항목이 없어요.");
+    return;
+  }
+
+  const fileName = makeCategoryShareFileName(payload.source.categoryName);
+  if (typeof File !== "function") {
+    downloadCategoryShare();
+    return;
+  }
+
+  const file = new File([JSON.stringify(payload, null, 2)], fileName, { type: "application/json" });
+
+  if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+    try {
+      await navigator.share({
+        title: `${payload.source.categoryName} - ${APP_NAME} 공유 목록`,
+        text: `${APP_NAME} ${payload.source.categoryName} 카테고리 공유 목록입니다.`,
+        files: [file]
+      });
+      showToast("공유창을 열었어요.");
+      return;
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+  }
+
+  downloadCategoryShare();
+}
+
+function configureNativeShareButton() {
+  els.nativeShareCategoryButton.hidden = !navigator.share;
+}
+
+function makeCategoryShareFileName(categoryName) {
+  const date = new Date().toISOString().slice(0, 10);
+  return `gaegol-tube-share-${safeFilePart(categoryName)}-${date}.json`;
+}
+
+function safeFilePart(value) {
+  return String(value || "category")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .slice(0, 40) || "category";
 }
 
 async function importLibrary(event) {
@@ -1380,16 +1591,23 @@ async function importLibrary(event) {
     const imported = JSON.parse(text);
     const incomingItems = Array.isArray(imported) ? imported : imported.items;
     if (!Array.isArray(incomingItems)) throw new Error("items missing");
+    const isCategoryShare = !Array.isArray(imported) && imported?.exportType === "category-share";
+    const sharedCategoryName = isCategoryShare ? cleanLabel(imported.source?.categoryName, "") : "";
 
     ensureLibraryShape();
     const importedProfiles = Array.isArray(imported.profiles) ? imported.profiles : [];
     importedProfiles.forEach((profile) => ensureProfile(String(profile)));
 
     const importedCategories = Array.isArray(imported.categories) ? imported.categories : [];
-    importedCategories.forEach(mergeImportedCategory);
+    const categoryIdMap = new Map();
+    importedCategories.forEach((raw) => {
+      const incomingId = String(typeof raw === "object" && raw?.id ? raw.id : "").trim();
+      const category = mergeImportedCategory(raw);
+      if (incomingId && category) categoryIdMap.set(incomingId, category.id);
+    });
 
     const existing = new Set(state.items.map((item) => `${item.type}:${item.videoId}`));
-    const cleanedItems = incomingItems.map(cleanImportedItem).filter(Boolean);
+    const cleanedItems = incomingItems.map((item) => cleanImportedItem(item, categoryIdMap)).filter(Boolean);
     let added = 0;
 
     cleanedItems.forEach((item) => {
@@ -1402,7 +1620,9 @@ async function importLibrary(event) {
 
     ensureLibraryShape();
     persistAndRender();
-    showToast(`${added}개를 가져왔어요.`);
+    showToast(isCategoryShare && sharedCategoryName
+      ? `${sharedCategoryName} 공유 목록에서 ${added}개를 가져왔어요.`
+      : `${added}개를 가져왔어요.`);
   } catch {
     showToast("가져오기 파일을 읽지 못했어요.");
   } finally {
@@ -1410,11 +1630,12 @@ async function importLibrary(event) {
   }
 }
 
-function cleanImportedItem(raw) {
+function cleanImportedItem(raw, categoryIdMap = new Map()) {
   const parsed = parseYoutubeUrl(raw.url || `https://www.youtube.com/watch?v=${raw.videoId || ""}`);
   if (!parsed) return null;
   const now = new Date().toISOString();
   let categoryId = String(raw.categoryId || "").trim();
+  if (categoryIdMap.has(categoryId)) categoryId = categoryIdMap.get(categoryId);
   if (!getCategory(categoryId)) {
     const categoryName = String(raw.categoryName || raw.category || "").trim();
     categoryId = categoryName ? ensureCategory(categoryName).id : DEFAULT_CATEGORY_ID;
