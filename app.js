@@ -1,5 +1,5 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.06.23.7";
+const APP_VERSION = "2026.06.23.8";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
@@ -15,6 +15,10 @@ const CLOUD_BACKUP_PREFIX = "tubeVaultBackupBeforeCloudPull:";
 const CATEGORY_DELETE_BACKUP_PREFIX = "gaegolTubeBeforeCategoryDelete:";
 const SUPABASE_TABLE = "tube_vault_states";
 const SYNC_DEBOUNCE_MS = 1200;
+const METADATA_TIMEOUT_MS = 8000;
+const METADATA_RETRY_MS = 24 * 60 * 60 * 1000;
+const METADATA_AUTO_LIMIT = 10;
+const METADATA_MANUAL_LIMIT = 20;
 const DEFAULT_THEME = {
   bg: "#fff8f1",
   surface: "#ffffff",
@@ -89,6 +93,7 @@ let draftTheme = { ...currentTheme };
 let themeDialogSaved = false;
 let syncMeta = loadSyncMeta();
 let pendingDeleteCategoryId = null;
+let metadataHydrationBusy = false;
 const syncState = {
   client: null,
   session: null,
@@ -121,6 +126,7 @@ const els = {
   typeFilter: $("#typeFilter"),
   slotCloud: $("#slotCloud"),
   searchInput: $("#searchInput"),
+  hydrateMetadataButton: $("#hydrateMetadataButton"),
   sortInput: $("#sortInput"),
   paginationPanel: $("#paginationPanel"),
   paginationSummary: $("#paginationSummary"),
@@ -198,6 +204,7 @@ const els = {
   editForm: $("#editForm"),
   editId: $("#editId"),
   editTitle: $("#editTitle"),
+  editAuthor: $("#editAuthor"),
   editCategory: $("#editCategory"),
   editSlot: $("#editSlot"),
   newEditCategoryButton: $("#newEditCategoryButton"),
@@ -272,6 +279,13 @@ function bindEvents() {
     state.query = els.searchInput.value.trim();
     resetToFirstPage();
     persistAndRender(false);
+  });
+  els.hydrateMetadataButton?.addEventListener("click", () => {
+    hydrateMissingMetadata({
+      force: true,
+      forceVisibleToast: true,
+      limit: METADATA_MANUAL_LIMIT
+    });
   });
   els.sortInput.addEventListener("change", () => {
     state.sort = els.sortInput.value;
@@ -431,6 +445,7 @@ function handleSave(event) {
   const category = getCategory(els.categoryInput.value) || getDefaultCategory();
   const slot = ensureCategorySlot(category.id, els.slotInput.value);
   const selectedTypeMode = getSelectedTypeMode();
+  const addedIds = [];
   let added = 0;
   let skipped = 0;
 
@@ -442,7 +457,7 @@ function handleSave(event) {
       return;
     }
 
-    state.items.unshift({
+    const item = {
       id: createId(video.videoId),
       videoId: video.videoId,
       type,
@@ -458,7 +473,9 @@ function handleSave(event) {
       favorite: false,
       createdAt: now,
       updatedAt: now
-    });
+    };
+    state.items.unshift(item);
+    addedIds.push(item.id);
     added += 1;
 
   });
@@ -466,7 +483,7 @@ function handleSave(event) {
   ensureProfile(profile);
   if (added > 0) resetToFirstPage();
   persistAndRender();
-  hydrateMissingTitles();
+  hydrateMissingMetadata({ onlyIds: addedIds, limit: METADATA_AUTO_LIMIT });
 
   if (added > 0) {
     els.saveForm.reset();
@@ -621,6 +638,7 @@ function openEditDialog(item) {
   ensureCategoryOptions();
   els.editId.value = item.id;
   els.editTitle.value = item.title || "";
+  els.editAuthor.value = item.author || "";
   els.editCategory.value = item.categoryId || DEFAULT_CATEGORY_ID;
   renderSlotOptions(els.editCategory, els.editSlot, item.slot || DEFAULT_SLOT);
   els.editStatus.value = item.status || "queue";
@@ -651,6 +669,7 @@ function saveEdit(event) {
   }
 
   const nextTitle = els.editTitle.value.trim();
+  const nextAuthor = cleanMetadataText(els.editAuthor.value, 80);
   const shouldUseFallbackTitle = !nextTitle || isGeneratedFallbackTitle(nextTitle, item.videoId);
   item.profile = item.profile || "나";
   item.categoryId = category.id;
@@ -658,6 +677,8 @@ function saveEdit(event) {
   item.type = nextType;
   item.url = normalizeYoutubeItemUrl(item.videoId, nextType);
   item.title = shouldUseFallbackTitle ? fallbackTitle(item) : nextTitle;
+  if ((item.author || "") !== nextAuthor) item.authorEdited = true;
+  item.author = nextAuthor;
   item.status = els.editStatus.value;
   item.tags = Array.isArray(item.tags) ? item.tags : [];
   item.note = els.editNote.value.trim();
@@ -770,7 +791,11 @@ function renderCards(items, filteredItemCount) {
     $(".category-badge", node).textContent = getCategoryName(item.categoryId);
     $(".slot-badge", node).textContent = item.slot || DEFAULT_SLOT;
     $(".card-title", node).textContent = displayTitle(item);
-    $(".card-note", node).textContent = item.note || item.author || " ";
+    const authorEl = $(".card-author", node);
+    const author = cleanMetadataText(item.author, 80);
+    authorEl.textContent = author ? `채널: ${author}` : "";
+    authorEl.hidden = !author;
+    $(".card-note", node).textContent = item.note || " ";
 
     const favoriteButton = $(".favorite-button", node);
     favoriteButton.textContent = item.favorite ? "★" : "☆";
@@ -896,7 +921,6 @@ function findCardByItemId(itemId) {
 }
 
 function getFilteredItems() {
-  const query = normalizeText(state.query);
   return state.items
     .filter((item) => {
       if (state.view === "video" && item.type !== "video") return false;
@@ -909,19 +933,30 @@ function getFilteredItems() {
       if (state.categoryFilter !== "all" && item.categoryId !== state.categoryFilter) return false;
       if (state.slotFilter !== "all" && item.slot !== state.slotFilter) return false;
 
-      if (!query) return true;
-      const haystack = normalizeText([
-        displayTitle(item),
-        item.videoId,
-        item.url,
-        item.author,
-        item.note,
-        getCategoryName(item.categoryId),
-        item.slot
-      ].join(" "));
-      return haystack.includes(query);
+      return matchesQuery(item, state.query);
     })
     .sort(sortItems);
+}
+
+function getSearchText(item) {
+  return normalizeSearchText([
+    displayTitle(item),
+    item.author,
+    item.videoId,
+    item.url,
+    item.note,
+    getCategoryName(item.categoryId),
+    item.slot,
+    getTypeLabel(item.type)
+  ].filter(Boolean).join(" "));
+}
+
+function matchesQuery(item, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+  const tokens = normalizedQuery.split(" ").filter(Boolean);
+  const haystack = getSearchText(item);
+  return tokens.every((token) => haystack.includes(token));
 }
 
 function sortItems(a, b) {
@@ -995,7 +1030,8 @@ function renderPagination(totalItems) {
   const start = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const end = Math.min(currentPage * pageSize, totalItems);
   const isFiltered = hasActiveItemFilter();
-  const summaryPrefix = isFiltered ? "필터 결과" : "전체";
+  const query = String(state.query || "").trim();
+  const summaryPrefix = query ? `‘${query}’ 검색 결과` : isFiltered ? "필터 결과" : "전체";
 
   els.pageSizeSelect.value = String(pageSize);
   els.paginationSummary.textContent = totalItems === 0
@@ -1160,23 +1196,142 @@ function normalizeItemType(item) {
   return "video";
 }
 
-async function hydrateMissingTitles() {
-  const targets = state.items.filter((item) => !item.title || item.title === fallbackTitle(item)).slice(0, 8);
-  if (!targets.length) return;
+function hydrateMissingTitles() {
+  hydrateMissingMetadata();
+}
 
-  for (const item of targets) {
-    try {
-      const response = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(item.url)}`);
-      if (!response.ok) continue;
-      const data = await response.json();
-      item.title = data.title || item.title;
-      item.author = data.author_name || item.author || "";
-      item.updatedAt = new Date().toISOString();
-      persistAndRender(false);
-    } catch {
-      return;
-    }
+async function hydrateMissingMetadata(options = {}) {
+  if (metadataHydrationBusy) {
+    if (options.forceVisibleToast) showToast("이미 유튜버명을 가져오는 중이에요.");
+    return { changedCount: 0, targetCount: 0 };
   }
+
+  const onlyIds = Array.isArray(options.onlyIds) ? new Set(options.onlyIds) : null;
+  const limit = options.limit || METADATA_AUTO_LIMIT;
+  const targets = state.items
+    .filter((item) => onlyIds ? onlyIds.has(item.id) : true)
+    .filter((item) => shouldHydrateMetadata(item, { force: options.force }))
+    .slice(0, limit);
+
+  if (!targets.length) {
+    if (options.forceVisibleToast) showToast("보강할 유튜버명이 없거나 최근에 이미 확인했어요.");
+    return { changedCount: 0, targetCount: 0 };
+  }
+
+  metadataHydrationBusy = true;
+  updateHydrateMetadataButton(true);
+  if (options.forceVisibleToast) showToast("유튜버명을 가져오는 중이에요.");
+
+  let changedCount = 0;
+  let stateChanged = false;
+
+  try {
+    for (const item of targets) {
+      const metadata = await fetchYoutubeMetadata(item);
+      const now = new Date().toISOString();
+
+      if (!metadata) {
+        item.metadataFetchFailedAt = now;
+        stateChanged = true;
+        continue;
+      }
+
+      const changed = applyMetadataToItem(item, metadata);
+      item.metadataFetchedAt = now;
+      delete item.metadataFetchFailedAt;
+      stateChanged = true;
+
+      if (changed) {
+        item.updatedAt = now;
+        changedCount += 1;
+      }
+    }
+
+    if (stateChanged) persistAndRender(false);
+
+    if (options.forceVisibleToast) {
+      showToast(changedCount > 0
+        ? `${changedCount}개 항목의 유튜버명을 보강했어요.`
+        : "보강할 유튜버명이 없거나 가져오지 못했어요.");
+    }
+
+    return { changedCount, targetCount: targets.length };
+  } finally {
+    metadataHydrationBusy = false;
+    updateHydrateMetadataButton(false);
+  }
+}
+
+function shouldHydrateMetadata(item, options = {}) {
+  if (!item || !item.videoId || !item.url) return false;
+  const needsTitle = !item.title || isGeneratedFallbackTitle(item.title, item.videoId);
+  const needsAuthor = !cleanMetadataText(item.author, 80) && !item.authorEdited;
+  if (!needsTitle && !needsAuthor) return false;
+  if (options.force) return true;
+
+  const lastAttempt = Math.max(
+    Date.parse(item.metadataFetchedAt || "") || 0,
+    Date.parse(item.metadataFetchFailedAt || "") || 0
+  );
+  return !lastAttempt || Date.now() - lastAttempt > METADATA_RETRY_MS;
+}
+
+async function fetchYoutubeMetadata(itemOrUrl) {
+  const url = typeof itemOrUrl === "string" ? itemOrUrl : itemOrUrl?.url;
+  if (!url) return null;
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), METADATA_TIMEOUT_MS);
+
+  try {
+    const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+    const response = await fetch(endpoint, { signal: controller.signal });
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    return {
+      title: cleanMetadataText(data.title, 200),
+      author: cleanMetadataText(data.author_name, 80),
+      authorUrl: cleanMetadataText(data.author_url, 300),
+      thumbnailUrl: cleanMetadataText(data.thumbnail_url, 500)
+    };
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function applyMetadataToItem(item, metadata) {
+  let changed = false;
+
+  if ((!item.title || isGeneratedFallbackTitle(item.title, item.videoId)) && metadata.title) {
+    item.title = metadata.title;
+    changed = true;
+  }
+
+  if (!item.authorEdited && !cleanMetadataText(item.author, 80) && metadata.author) {
+    item.author = metadata.author;
+    changed = true;
+  }
+
+  if (metadata.authorUrl && !item.authorUrl) {
+    item.authorUrl = metadata.authorUrl;
+    changed = true;
+  }
+
+  if (metadata.thumbnailUrl && !item.thumbnailUrl) {
+    item.thumbnailUrl = metadata.thumbnailUrl;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function updateHydrateMetadataButton(isBusy) {
+  if (!els.hydrateMetadataButton) return;
+  els.hydrateMetadataButton.disabled = isBusy;
+  els.hydrateMetadataButton.textContent = isBusy ? "가져오는 중..." : "유튜버명 보강";
 }
 
 function wireThemeSettings() {
@@ -2377,7 +2532,7 @@ function sanitizeSharedItem(item, sharedCategoryId, options) {
     type,
     url: normalizeYoutubeItemUrl(item.videoId, type),
     title: item.title || "",
-    author: item.author || "",
+    author: cleanMetadataText(item.author, 80),
     note: options.includeNotes ? item.note || "" : "",
     tags: [],
     profile: "공유",
@@ -2533,8 +2688,13 @@ function cleanImportedItem(raw, categoryIdMap = new Map()) {
     videoId: parsed.videoId,
     type,
     url: normalizeYoutubeItemUrl(parsed.videoId, type),
-    title: String(raw.title || "").trim(),
-    author: String(raw.author || "").trim(),
+    title: cleanMetadataText(raw.title, 200),
+    author: cleanMetadataText(raw.author, 80),
+    authorUrl: cleanMetadataText(raw.authorUrl, 300),
+    thumbnailUrl: cleanMetadataText(raw.thumbnailUrl, 500),
+    metadataFetchedAt: cleanMetadataText(raw.metadataFetchedAt, 40),
+    metadataFetchFailedAt: cleanMetadataText(raw.metadataFetchFailedAt, 40),
+    authorEdited: Boolean(raw.authorEdited),
     note: String(raw.note || "").trim(),
     tags: Array.isArray(raw.tags) ? raw.tags.map(String).map((tag) => tag.trim()).filter(Boolean) : parseTags(raw.tags || ""),
     profile: String(raw.profile || "나").trim() || "나",
@@ -2616,6 +2776,13 @@ function ensureLibraryShape() {
 
   state.items.forEach((item) => {
     item.type = normalizeItemType(item);
+    item.title = cleanMetadataText(item.title, 200);
+    item.author = cleanMetadataText(item.author, 80);
+    item.authorUrl = cleanMetadataText(item.authorUrl, 300);
+    item.thumbnailUrl = cleanMetadataText(item.thumbnailUrl, 500);
+    item.metadataFetchedAt = cleanMetadataText(item.metadataFetchedAt, 40);
+    item.metadataFetchFailedAt = cleanMetadataText(item.metadataFetchFailedAt, 40);
+    item.authorEdited = Boolean(item.authorEdited);
     if (item.videoId) {
       item.videoId = String(item.videoId).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
       item.url = normalizeYoutubeItemUrl(item.videoId, item.type);
@@ -2728,6 +2895,11 @@ function cleanLabel(value, fallback) {
   return String(value || "").trim().slice(0, 28) || fallback;
 }
 
+function cleanMetadataText(value, maxLength = 200) {
+  if (typeof value !== "string") return "";
+  return value.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, maxLength);
+}
+
 function createDefaultCategory() {
   return { id: DEFAULT_CATEGORY_ID, name: DEFAULT_CATEGORY_NAME, slots: [DEFAULT_SLOT] };
 }
@@ -2745,6 +2917,8 @@ function parseTags(value) {
 }
 
 function thumbnailUrl(item) {
+  const hydratedThumbnail = cleanMetadataText(item.thumbnailUrl, 500);
+  if (hydratedThumbnail) return hydratedThumbnail;
   return `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`;
 }
 
@@ -2772,7 +2946,15 @@ function getTypeClass(type) {
 }
 
 function normalizeText(value) {
-  return String(value || "").trim().toLocaleLowerCase("ko");
+  return normalizeSearchText(value);
+}
+
+function normalizeSearchText(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function createId(seed) {

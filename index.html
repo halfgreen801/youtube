@@ -172,10 +172,17 @@
 
         <section class="content" aria-label="저장된 YouTube 목록">
           <div class="content-toolbar">
-            <label class="search-box" aria-label="검색">
-              <span>⌕</span>
-              <input id="searchInput" type="search" autocomplete="off" placeholder="제목, 메모, 카테고리 검색">
-            </label>
+            <div class="search-stack">
+              <label class="search-box" aria-label="제목, 유튜버명, 메모, 카테고리로 목록 검색">
+                <span>⌕</span>
+                <input id="searchInput" type="search" autocomplete="off" placeholder="제목, 유튜버명, 메모, 카테고리 검색" aria-label="제목, 유튜버명, 메모, 카테고리로 목록 검색">
+              </label>
+              <p class="field-help search-help">제목, 유튜버명, 메모, 카테고리, 분류 칸으로 검색할 수 있습니다.</p>
+            </div>
+
+            <div class="metadata-tools">
+              <button class="ghost-button" id="hydrateMetadataButton" type="button" title="제목이나 유튜버명이 비어 있는 항목을 자동으로 채웁니다." aria-label="비어 있는 유튜버명과 제목 자동 보강">유튜버명 보강</button>
+            </div>
 
             <select id="sortInput" class="sort-select" aria-label="정렬">
               <option value="newest">최근 저장순</option>
@@ -249,6 +256,12 @@
           제목
           <input id="editTitle" type="text" autocomplete="off">
         </label>
+
+        <label class="field">
+          <span>유튜버명</span>
+          <input id="editAuthor" type="text" maxlength="80" placeholder="채널명 또는 유튜버명" autocomplete="off">
+        </label>
+        <p class="field-help">유튜버명으로도 검색할 수 있습니다.</p>
 
         <label>
           상태
@@ -584,6 +597,7 @@
             <span class="slot-badge"></span>
           </div>
           <h3 class="card-title"></h3>
+          <p class="card-author" hidden></p>
           <p class="card-note"></p>
         </div>
 
