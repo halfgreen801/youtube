@@ -1,10 +1,11 @@
-const CACHE_NAME = "gaegol-tube-shell-v17";
+const CACHE_NAME = "gaegol-tube-shell-v18";
 const SHELL_FILES = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./config.js",
+  "./vendor/supabase-js.min.js",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-192.png",

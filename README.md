@@ -38,6 +38,7 @@
 - 같은 GitHub Pages 주소로 다른 기기에서 접속해도 자동으로 보이지 않습니다.
 - 브라우저 데이터 삭제, 시크릿 모드 종료, 저장소 초기화가 발생하면 로컬 데이터가 사라질 수 있습니다.
 - 중요한 데이터는 `내보내기`로 JSON 백업을 만들어 두세요.
+- localStorage는 이 기기의 브라우저 저장공간입니다. 공용 PC, 다른 사람이 접근할 수 있는 기기, 업무상 민감한 메모 저장에는 주의하세요. 비밀번호, 개인 토큰, 주민번호, 내부자료 링크는 저장하지 마세요.
 
 ## 목록 미리보기 재생
 
@@ -115,16 +116,40 @@ window.TUBE_VAULT_CONFIG = {
 7. 앱의 `저장 방식` 영역에서 로그인합니다.
 8. 클라우드 데이터가 있으면 `클라우드 데이터 불러오기`, `현재 기기 데이터 업로드`, `가능하면 병합` 중 하나를 선택합니다.
 
-`allowSignup`이 `false`이면 앱 안의 회원가입 버튼은 숨겨집니다. 개인용 앱이라면 Supabase 대시보드에서 내 계정을 만든 뒤 `allowSignup: false`로 두는 구성이 안전합니다.
+`allowSignup`이 `false`이면 앱 안의 회원가입 버튼은 숨겨집니다. 이것은 앱 UI 설정일 뿐이며, 실제 공개 회원가입 차단은 Supabase 대시보드의 `Authentication` 설정에서 해야 합니다. 개인용 앱이라면 Supabase 대시보드에서 내 계정을 만든 뒤 공개 회원가입을 끄고 `allowSignup: false`로 두는 구성이 안전합니다.
 
 ## 보안 주의사항
 
 - `service_role` key, 관리자 키, 개인 토큰은 절대 브라우저 코드에 넣지 마세요.
-- 브라우저에는 Supabase `anon/public` key만 들어갈 수 있습니다.
+- 브라우저에는 Supabase `anon/public` key만 들어갈 수 있습니다. 이 키는 브라우저 앱에 들어갈 수 있는 공개 키입니다.
 - 저장소가 public이면 앱 코드와 `config.js`의 anon key는 공개될 수 있습니다.
-- anon key는 공개 가능하므로, RLS 없이 쓰면 위험합니다.
+- anon key는 공개 가능하지만, RLS가 꺼져 있으면 위험합니다.
 - 데이터 보호의 핵심은 `supabase/schema.sql`의 Row Level Security입니다.
+- 반드시 Supabase SQL Editor에서 `supabase/schema.sql`을 실행하고 RLS 정책이 켜져 있는지 확인하세요.
 - `public.tube_vault_states`는 `auth.uid()`가 `user_id`와 같은 행만 읽고 쓸 수 있어야 합니다.
+- Supabase JS는 CDN에서 매번 동적으로 불러오지 않고 `vendor/supabase-js.min.js`에 고정 버전으로 포함합니다.
+
+RLS 설정 확인용 SQL:
+
+```sql
+select
+  schemaname,
+  tablename,
+  rowsecurity
+from pg_tables
+where schemaname = 'public'
+  and tablename = 'tube_vault_states';
+
+select
+  policyname,
+  cmd,
+  roles,
+  qual,
+  with_check
+from pg_policies
+where schemaname = 'public'
+  and tablename = 'tube_vault_states';
+```
 
 ## 백업/복원 방법
 

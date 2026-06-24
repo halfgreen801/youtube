@@ -461,10 +461,19 @@ label.import-button:focus-within {
 
 .sync-description,
 .sync-last,
+.sync-security-note,
 .cloud-choice p {
   color: var(--muted);
   font-size: 0.84rem;
   line-height: 1.45;
+}
+
+.sync-security-note,
+.migration-security-note {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface);
 }
 
 .sync-auth,
@@ -1066,6 +1075,40 @@ label.import-button:focus-within {
   line-height: 1.4;
 }
 
+.share-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface);
+}
+
+.share-summary div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.share-summary dt,
+.share-summary dd {
+  margin: 0;
+}
+
+.share-summary dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.share-summary dd {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 900;
+}
+
 .share-options {
   display: grid;
   gap: 8px;
@@ -1176,6 +1219,12 @@ label.import-button:focus-within {
 
 .migration-warning {
   min-height: 22px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.migration-security-note {
   color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.45;

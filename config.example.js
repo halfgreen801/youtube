@@ -3,9 +3,10 @@
 // 2. Run supabase/schema.sql in the Supabase SQL Editor.
 // 3. Copy your Project URL and anon/public key here.
 // 4. Never paste the service_role key into this file.
+// 5. Keep allowSignup false after your personal account is created.
 window.TUBE_VAULT_CONFIG = {
   syncEnabled: true,
   supabaseUrl: "https://YOUR_PROJECT_ID.supabase.co",
   supabaseAnonKey: "YOUR_SUPABASE_ANON_PUBLIC_KEY",
-  allowSignup: true
+  allowSignup: false
 };

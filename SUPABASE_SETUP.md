@@ -25,6 +25,9 @@ Email 로그인이 켜져 있으면 됩니다.
 처음 테스트할 때는 앱의 `allowSignup`을 `true`로 두면 앱 화면에서 바로 회원가입할 수 있습니다.
 혼자만 쓸 계정을 만든 뒤에는 `allowSignup`을 `false`로 바꾸는 것이 좋습니다.
 
+중요: `allowSignup: false`는 개골튜브 화면에서 회원가입 버튼을 숨기는 앱 UI 설정일 뿐입니다.
+실제로 새 사용자의 공개 회원가입을 막으려면 Supabase의 `Authentication` 설정에서 신규 가입을 꺼야 합니다.
+
 ## 3. 저장 테이블 만들기
 
 Supabase 왼쪽 메뉴에서 다음으로 이동합니다.
@@ -40,6 +43,7 @@ supabase/schema.sql
 ```
 
 이 SQL은 `tube_vault_states`라는 저장 공간을 만들고, 로그인한 본인 데이터만 읽고 쓰게 보호합니다.
+RLS가 꺼져 있으면 anon/public key로도 데이터가 위험해질 수 있으므로 이 단계는 반드시 해야 합니다.
 
 ## 4. Project URL과 anon public key 복사하기
 
@@ -56,7 +60,10 @@ Project URL
 anon public key
 ```
 
-주의: `service_role` key는 절대 GitHub나 앱 코드에 넣으면 안 됩니다.
+`anon public key`는 브라우저 앱에 들어갈 수 있는 공개 키입니다.
+하지만 공개 키라고 해서 RLS 없이 안전한 것은 아닙니다.
+
+주의: `service_role` key 또는 secret key는 절대 GitHub, `config.js`, 브라우저 코드에 넣으면 안 됩니다.
 
 ## 5. config.js 수정하기
 
@@ -99,5 +106,35 @@ allowSignup: false
 
 - `config.js`에 Project URL이 들어갔는지 확인합니다.
 - `config.js`에 anon public key가 들어갔는지 확인합니다.
-- `service_role` key를 넣지 않았는지 확인합니다.
+- `service_role` key 또는 secret key를 넣지 않았는지 확인합니다.
 - Supabase SQL Editor에서 `supabase/schema.sql`을 실행했는지 확인합니다.
+- Supabase Authentication 설정에서 공개 회원가입을 원하는 상태로 껐는지 확인합니다.
+
+## RLS 설정 확인 SQL
+
+Supabase SQL Editor에서 아래 쿼리를 실행해 RLS가 켜져 있고 정책이 만들어졌는지 확인할 수 있습니다.
+
+```sql
+select
+  schemaname,
+  tablename,
+  rowsecurity
+from pg_tables
+where schemaname = 'public'
+  and tablename = 'tube_vault_states';
+
+select
+  policyname,
+  cmd,
+  roles,
+  qual,
+  with_check
+from pg_policies
+where schemaname = 'public'
+  and tablename = 'tube_vault_states';
+```
+
+## localStorage 주의사항
+
+localStorage는 이 기기의 브라우저 저장공간입니다. 공용 PC, 다른 사람이 접근할 수 있는 기기, 업무상 민감한 메모 저장에는 주의하세요.
+비밀번호, 개인 토큰, 주민번호, 내부자료 링크는 저장하지 마세요.

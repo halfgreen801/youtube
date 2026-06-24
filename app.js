@@ -16,6 +16,8 @@ const SYNC_META_KEY = "tubeVaultSyncMeta";
 const CLOUD_BACKUP_PREFIX = "tubeVaultBackupBeforeCloudPull:";
 const CATEGORY_DELETE_BACKUP_PREFIX = "gaegolTubeBeforeCategoryDelete:";
 const SUPABASE_TABLE = "tube_vault_states";
+const SUPABASE_CLIENT_SCRIPT = "./vendor/supabase-js.min.js";
+const SUPABASE_CLIENT_VERSION = "2.108.2";
 const SYNC_DEBOUNCE_MS = 1200;
 const METADATA_TIMEOUT_MS = 8000;
 const METADATA_RETRY_MS = 24 * 60 * 60 * 1000;
@@ -205,6 +207,11 @@ const els = {
   shareIncludeStatus: $("#shareIncludeStatus"),
   shareIncludeFavorite: $("#shareIncludeFavorite"),
   shareIncludeSlot: $("#shareIncludeSlot"),
+  shareSummaryCount: $("#shareSummaryCount"),
+  shareSummaryNotes: $("#shareSummaryNotes"),
+  shareSummaryStatus: $("#shareSummaryStatus"),
+  shareSummaryFavorite: $("#shareSummaryFavorite"),
+  shareSummarySlot: $("#shareSummarySlot"),
   nativeShareCategoryButton: $("#nativeShareCategoryButton"),
   downloadCategoryShareButton: $("#downloadCategoryShareButton"),
   themeDialog: $("#themeDialog"),
@@ -339,6 +346,8 @@ function bindEvents() {
   els.applyUpdateButton.addEventListener("click", applyWaitingServiceWorker);
   els.categoryShareButton.addEventListener("click", openCategoryShareDialog);
   els.shareCategorySelect.addEventListener("change", updateCategoryShareCount);
+  [els.shareIncludeNotes, els.shareIncludeStatus, els.shareIncludeFavorite, els.shareIncludeSlot]
+    .forEach((input) => input.addEventListener("change", updateCategoryShareSummary));
   els.categoryShareForm.addEventListener("submit", handleCategoryShareSubmit);
   els.nativeShareCategoryButton.addEventListener("click", shareCategoryWithNativeShare);
   els.editForm.addEventListener("submit", saveEdit);
@@ -821,7 +830,10 @@ function renderCards(items, filteredItemCount) {
     statusButton.classList.toggle("done", item.status === "done");
     statusButton.title = item.status === "done" ? "볼 예정으로 변경" : "봤음 표시";
 
-    $(".open-button", node).href = item.url;
+    const openButton = $(".open-button", node);
+    const safeYoutubeUrl = normalizeYoutubeItemUrl(item.videoId, normalizeItemType(item));
+    openButton.href = safeYoutubeUrl || "https://www.youtube.com/";
+    openButton.hidden = !safeYoutubeUrl;
     els.videoGrid.append(node);
   });
 }
@@ -918,12 +930,14 @@ function stopInlinePreview(itemId = activePreviewItemId) {
 }
 
 function createYoutubeEmbedUrl(videoId, type, options = {}) {
+  const normalizedVideoId = normalizeVideoId(videoId);
+  if (!normalizedVideoId) return "about:blank";
   const params = new URLSearchParams({
     rel: "0",
     playsinline: "1"
   });
   if (options.autoplay) params.set("autoplay", "1");
-  return `https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}`;
+  return `https://www.youtube.com/embed/${encodeURIComponent(normalizedVideoId)}?${params.toString()}`;
 }
 
 function restorePreview(mediaElement, item) {
@@ -1204,8 +1218,8 @@ function parseYoutubeUrl(rawUrl) {
     }
   }
 
-  videoId = videoId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
-  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+  videoId = normalizeVideoId(videoId);
+  if (!videoId) return null;
 
   const type = detectYoutubeTypeFromUrl(url);
 
@@ -1222,9 +1236,11 @@ function detectYoutubeTypeFromUrl(url) {
 }
 
 function normalizeYoutubeItemUrl(videoId, type) {
+  const normalizedVideoId = normalizeVideoId(videoId);
+  if (!normalizedVideoId) return "";
   return type === "short"
-    ? `https://www.youtube.com/shorts/${videoId}`
-    : `https://www.youtube.com/watch?v=${videoId}`;
+    ? `https://www.youtube.com/shorts/${normalizedVideoId}`
+    : `https://www.youtube.com/watch?v=${normalizedVideoId}`;
 }
 
 function normalizeItemType(item) {
@@ -1315,7 +1331,10 @@ function shouldHydrateMetadata(item, options = {}) {
 }
 
 async function fetchYoutubeMetadata(itemOrUrl) {
-  const url = typeof itemOrUrl === "string" ? itemOrUrl : itemOrUrl?.url;
+  const parsed = typeof itemOrUrl === "string" ? parseYoutubeUrl(itemOrUrl) : null;
+  const videoId = parsed?.videoId || normalizeVideoId(itemOrUrl?.videoId);
+  const type = parsed?.type || normalizeItemType(itemOrUrl);
+  const url = normalizeYoutubeItemUrl(videoId, type);
   if (!url) return null;
 
   const controller = new AbortController();
@@ -1562,10 +1581,11 @@ function loadSupabaseClientScript() {
 
   return new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
+    script.src = SUPABASE_CLIENT_SCRIPT;
     script.async = true;
     script.defer = true;
     script.dataset.tubeVaultSupabase = "true";
+    script.dataset.supabaseVersion = SUPABASE_CLIENT_VERSION;
     script.addEventListener("load", () => {
       script.dataset.loaded = "true";
       resolve();
@@ -2604,6 +2624,7 @@ async function reloadForFreshVersion() {
 function openCategoryShareDialog() {
   ensureLibraryShape();
   renderCategoryShareOptions();
+  resetCategoryShareDefaults();
 
   const preferred = state.categoryFilter !== "all" && getCategory(state.categoryFilter)
     ? state.categoryFilter
@@ -2627,6 +2648,13 @@ function getItemsByCategory(categoryId) {
   return getItemsByCategoryId(categoryId);
 }
 
+function resetCategoryShareDefaults() {
+  els.shareIncludeNotes.checked = false;
+  els.shareIncludeStatus.checked = false;
+  els.shareIncludeFavorite.checked = false;
+  els.shareIncludeSlot.checked = true;
+}
+
 function updateCategoryShareCount() {
   const categoryId = els.shareCategorySelect.value;
   const count = getItemsByCategory(categoryId).length;
@@ -2637,6 +2665,17 @@ function updateCategoryShareCount() {
     : "공유할 항목이 없습니다.";
   els.downloadCategoryShareButton.disabled = !hasItems;
   els.nativeShareCategoryButton.disabled = !hasItems;
+  updateCategoryShareSummary();
+}
+
+function updateCategoryShareSummary() {
+  const categoryId = els.shareCategorySelect.value;
+  const count = getItemsByCategory(categoryId).length;
+  els.shareSummaryCount.textContent = `${count}개`;
+  els.shareSummaryNotes.textContent = els.shareIncludeNotes.checked ? "예" : "아니요";
+  els.shareSummaryStatus.textContent = els.shareIncludeStatus.checked ? "예" : "아니요";
+  els.shareSummaryFavorite.textContent = els.shareIncludeFavorite.checked ? "예" : "아니요";
+  els.shareSummarySlot.textContent = els.shareIncludeSlot.checked ? "예" : "아니요";
 }
 
 function handleCategoryShareSubmit(event) {
@@ -2961,12 +3000,16 @@ function ensureLibraryShape() {
     item.metadataFetchedAt = cleanMetadataText(item.metadataFetchedAt, 40);
     item.metadataFetchFailedAt = cleanMetadataText(item.metadataFetchFailedAt, 40);
     item.authorEdited = Boolean(item.authorEdited);
-    if (item.videoId) {
-      item.videoId = String(item.videoId).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
+    const normalizedVideoId = normalizeVideoId(item.videoId);
+    if (normalizedVideoId) {
+      item.videoId = normalizedVideoId;
       item.url = normalizeYoutubeItemUrl(item.videoId, item.type);
       if (isGeneratedFallbackTitle(item.title, item.videoId)) {
         item.title = fallbackTitle(item);
       }
+    } else {
+      item.videoId = "";
+      item.url = "";
     }
     const existingCategory = getCategory(item.categoryId);
     if (!existingCategory) {
@@ -3168,6 +3211,11 @@ function cleanMetadataText(value, maxLength = 200) {
   return value.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, maxLength);
 }
 
+function normalizeVideoId(value) {
+  const videoId = String(value || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
+  return /^[a-zA-Z0-9_-]{11}$/.test(videoId) ? videoId : "";
+}
+
 function createDefaultCategory(overrides = {}) {
   return {
     id: DEFAULT_CATEGORY_ID,
@@ -3191,9 +3239,8 @@ function parseTags(value) {
 }
 
 function thumbnailUrl(item) {
-  const hydratedThumbnail = cleanMetadataText(item.thumbnailUrl, 500);
-  if (hydratedThumbnail) return hydratedThumbnail;
-  return `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg`;
+  const videoId = normalizeVideoId(item.videoId);
+  return videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "icon.svg";
 }
 
 function displayTitle(item) {
