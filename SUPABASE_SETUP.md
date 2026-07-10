@@ -44,6 +44,7 @@ supabase/schema.sql
 
 이 SQL은 `tube_vault_states`라는 저장 공간을 만들고, 로그인한 본인 데이터만 읽고 쓰게 보호합니다.
 RLS가 꺼져 있으면 anon/public key로도 데이터가 위험해질 수 있으므로 이 단계는 반드시 해야 합니다.
+최신 SQL은 RLS를 강제로 적용하고, 로그인하지 않은 `anon` 역할의 테이블 권한을 회수하며, 저장 데이터가 JSON 객체인지도 검사합니다. 예전에 한 번 실행했더라도 이 저장소의 최신 `schema.sql`을 다시 실행해 주세요.
 
 ## 4. Project URL과 anon public key 복사하기
 
@@ -84,6 +85,8 @@ window.TUBE_VAULT_CONFIG = {
 allowSignup: false
 ```
 
+이 저장소의 CSP는 현재 Supabase 프로젝트 주소만 연결하도록 제한되어 있습니다. 나중에 다른 Supabase 프로젝트로 바꾸면 `index.html`의 `Content-Security-Policy` 안 `connect-src`에 있는 HTTPS 주소와 WSS 주소도 새 Project URL에 맞춰 함께 바꿔야 합니다.
+
 ## 6. GitHub Pages에 다시 배포하기
 
 `config.js`를 수정한 뒤 GitHub에 배포하면 여러 기기에서 같은 동기화 기능을 쓸 수 있습니다.
@@ -101,6 +104,8 @@ allowSignup: false
 1. 같은 개골튜브 주소를 엽니다.
 2. 같은 이메일과 비밀번호로 로그인합니다.
 3. `클라우드 데이터 불러오기`를 누릅니다.
+
+그 뒤 자동 저장 중 다른 기기의 더 최신 변경을 발견하면 앱이 조용히 덮어쓰지 않고 동기화 선택 화면을 다시 보여줍니다. 둘 다 살리고 싶을 때는 `가능하면 병합`을 먼저 선택하세요. 검색어와 필터 같은 화면 상태는 기기별로 유지되고, 목록·카테고리·분류 칸만 클라우드에 동기화됩니다.
 
 ## 확인해야 할 것
 

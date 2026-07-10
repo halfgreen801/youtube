@@ -1,5 +1,5 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.06.24.1";
+const APP_VERSION = "2026.07.11.1";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
@@ -23,6 +23,18 @@ const METADATA_TIMEOUT_MS = 8000;
 const METADATA_RETRY_MS = 24 * 60 * 60 * 1000;
 const METADATA_AUTO_LIMIT = 10;
 const METADATA_MANUAL_LIMIT = 20;
+const MAX_IMPORT_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_IMPORT_ITEMS = 10000;
+const MAX_IMPORT_CATEGORIES = 1000;
+const MAX_IMPORT_PROFILES = 200;
+const YOUTUBE_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtube-nocookie.com",
+  "www.youtube-nocookie.com"
+]);
 const DEFAULT_THEME = {
   bg: "#fff8f1",
   surface: "#ffffff",
@@ -116,7 +128,8 @@ const syncState = {
   errorMessage: "",
   cloudRow: null,
   needsCloudChoice: false,
-  saveTimer: 0
+  saveTimer: 0,
+  writeQueue: Promise.resolve()
 };
 
 const els = {
@@ -899,7 +912,9 @@ function playInlinePreview(itemId) {
   iframe.className = "inline-player";
   iframe.title = displayTitle(item) || "YouTube 영상";
   iframe.src = createYoutubeEmbedUrl(item.videoId, item.type, { autoplay: true });
-  iframe.allow = "accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+  iframe.allow = "autoplay; encrypted-media; picture-in-picture";
+  iframe.loading = "lazy";
+  iframe.referrerPolicy = "strict-origin-when-cross-origin";
   iframe.allowFullscreen = true;
 
   const stopButton = document.createElement("button");
@@ -937,7 +952,7 @@ function createYoutubeEmbedUrl(videoId, type, options = {}) {
     playsinline: "1"
   });
   if (options.autoplay) params.set("autoplay", "1");
-  return `https://www.youtube.com/embed/${encodeURIComponent(normalizedVideoId)}?${params.toString()}`;
+  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(normalizedVideoId)}?${params.toString()}`;
 }
 
 function restorePreview(mediaElement, item) {
@@ -1173,7 +1188,7 @@ function setCategorySortMode(mode) {
 }
 
 function parseYoutubeLinks(text) {
-  const matches = text.match(/(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be|youtube-nocookie\.com)\/[^\s<>"']+/gi) || [];
+  const matches = String(text || "").match(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?/gi) || [];
   const seen = new Set();
   const parsed = [];
 
@@ -1190,7 +1205,8 @@ function parseYoutubeLinks(text) {
 }
 
 function parseYoutubeUrl(rawUrl) {
-  let value = rawUrl.trim().replace(/[),.\]]+$/g, "");
+  let value = String(rawUrl || "").trim().replace(/[),.\]}]+$/g, "");
+  if (!value) return null;
   if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
 
   let url;
@@ -1200,13 +1216,13 @@ function parseYoutubeUrl(rawUrl) {
     return null;
   }
 
-  const host = url.hostname.toLowerCase().replace(/^www\./, "").replace(/^m\./, "");
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
   const parts = url.pathname.split("/").filter(Boolean);
   let videoId = "";
 
   if (host === "youtu.be") {
     videoId = parts[0] || "";
-  } else if (host.endsWith("youtube.com") || host.endsWith("youtube-nocookie.com")) {
+  } else if (YOUTUBE_HOSTS.has(host)) {
     if (url.pathname === "/watch") {
       videoId = url.searchParams.get("v") || "";
     } else if (parts[0] === "shorts") {
@@ -1615,8 +1631,8 @@ function renderSyncPanel() {
     badge = "동기화 선택 필요";
     detail = "클라우드 데이터와 현재 기기 데이터 중 사용할 방식을 선택하세요.";
   } else if (signedIn && syncState.available) {
-    badge = "클라우드 동기화 중";
-    detail = `클라우드 동기화 중 / 마지막 동기화: ${formatSyncTime(lastSyncedAt)}`;
+    badge = "클라우드 동기화됨";
+    detail = `클라우드 연결됨 / 마지막 동기화: ${formatSyncTime(lastSyncedAt)}`;
   } else if (syncState.configured && syncState.status === "unavailable") {
     detail = "Supabase 클라이언트를 불러오지 못했습니다. 로컬 저장은 계속 사용할 수 있습니다.";
   } else if (syncState.configured) {
@@ -1804,7 +1820,7 @@ async function pullCloudState() {
 
   setSyncBusy(true);
   try {
-    const row = syncState.cloudRow || await fetchCloudState();
+    const row = await fetchCloudState();
     if (!row) {
       showToast("불러올 클라우드 데이터가 없어요.");
       return;
@@ -1841,8 +1857,15 @@ async function pushLocalState() {
 
   setSyncBusy(true);
   try {
+    const row = await fetchCloudState();
+    if (row && getStateItemCount(row.data) > 0 && !areLibraryStatesEqual(row.data, serializeStateForCloud())) {
+      const confirmed = window.confirm("클라우드에 다른 기기에서 저장한 변경사항이 있습니다. 현재 기기 목록으로 덮어쓸까요? 취소하면 병합이나 클라우드 불러오기를 선택할 수 있습니다.");
+      if (!confirmed) return;
+      backupStateObject(row.data, "before-cloud-overwrite");
+    }
+
     syncState.needsCloudChoice = false;
-    const saved = await upsertCloudState();
+    const saved = await upsertCloudState({ force: true });
     if (saved) showToast("현재 기기 데이터를 업로드했어요.");
   } catch (error) {
     setSyncError(error, "현재 기기 데이터를 업로드하지 못했습니다.");
@@ -1857,9 +1880,10 @@ async function mergeCloudState() {
 
   setSyncBusy(true);
   try {
-    const row = syncState.cloudRow || await fetchCloudState();
+    const row = await fetchCloudState();
     if (!row) {
-      const saved = await upsertCloudState();
+      syncState.needsCloudChoice = false;
+      const saved = await upsertCloudState({ force: true });
       if (saved) showToast("업로드할 클라우드 데이터를 만들었어요.");
       return;
     }
@@ -1869,7 +1893,7 @@ async function mergeCloudState() {
     resetToFirstPage();
     syncState.needsCloudChoice = false;
     persistAndRender(false);
-    await upsertCloudState();
+    await upsertCloudState({ force: true });
     showToast("가능한 항목을 병합하고 동기화했어요.");
   } catch (error) {
     setSyncError(error, "클라우드 데이터와 병합하지 못했습니다.");
@@ -1889,7 +1913,22 @@ function scheduleCloudSave() {
   }, SYNC_DEBOUNCE_MS);
 }
 
-async function upsertCloudState({ silent = false } = {}) {
+async function upsertCloudState(options = {}) {
+  const previousWrite = syncState.writeQueue;
+  let releaseWrite;
+  syncState.writeQueue = new Promise((resolve) => {
+    releaseWrite = resolve;
+  });
+
+  await previousWrite;
+  try {
+    return await performCloudUpsert(options);
+  } finally {
+    releaseWrite();
+  }
+}
+
+async function performCloudUpsert({ silent = false, force = false } = {}) {
   if (!canSync() || syncState.needsCloudChoice) return false;
   if (state.items.length === 0) {
     if (!silent) {
@@ -1899,35 +1938,102 @@ async function upsertCloudState({ silent = false } = {}) {
   }
 
   const userId = syncState.session.user.id;
+  const localData = serializeStateForCloud();
+  let latestRow = null;
+
+  if (!force) {
+    latestRow = await fetchCloudState();
+    if (latestRow && areLibraryStatesEqual(latestRow.data, localData)) {
+      finishCloudSave(latestRow);
+      return true;
+    }
+
+    if (latestRow && shouldPromptForCloud(latestRow)) {
+      requireCloudChoice(latestRow);
+      return false;
+    }
+  }
+
   const updatedAt = new Date().toISOString();
+  const payload = {
+    user_id: userId,
+    data: localData,
+    updated_at: updatedAt
+  };
   syncState.status = "syncing";
   if (!silent) renderSyncPanel();
 
-  const { error } = await syncState.client
-    .from(SUPABASE_TABLE)
-    .upsert({
-      user_id: userId,
-      data: serializeStateForCloud(),
-      updated_at: updatedAt
-    }, { onConflict: "user_id" });
+  let result;
+  if (force) {
+    result = await syncState.client
+      .from(SUPABASE_TABLE)
+      .upsert(payload, { onConflict: "user_id" })
+      .select("data, updated_at")
+      .maybeSingle();
+  } else if (latestRow) {
+    result = await syncState.client
+      .from(SUPABASE_TABLE)
+      .update(payload)
+      .eq("user_id", userId)
+      .eq("updated_at", latestRow.updated_at)
+      .select("data, updated_at")
+      .maybeSingle();
+  } else {
+    result = await syncState.client
+      .from(SUPABASE_TABLE)
+      .insert(payload)
+      .select("data, updated_at")
+      .maybeSingle();
+  }
 
-  if (error) throw error;
+  if (result.error) {
+    if (!force && result.error.code === "23505") {
+      requireCloudChoice(await fetchCloudState());
+      return false;
+    }
+    throw result.error;
+  }
+
+  if (!result.data) {
+    requireCloudChoice(await fetchCloudState());
+    return false;
+  }
+
+  finishCloudSave(result.data);
+  return true;
+}
+
+function finishCloudSave(row) {
   syncState.status = "synced";
   syncState.errorMessage = "";
   syncState.cloudRow = {
-    data: serializeStateForCloud(),
-    updated_at: updatedAt
+    data: row.data,
+    updated_at: row.updated_at
   };
-  markCloudSynced(updatedAt);
+  syncState.needsCloudChoice = false;
+  markCloudSynced(row.updated_at);
   renderSyncPanel();
-  return true;
+}
+
+function requireCloudChoice(row) {
+  syncState.cloudRow = row || null;
+  syncState.needsCloudChoice = true;
+  syncState.status = "needs-choice";
+  syncState.errorMessage = "";
+  renderSyncPanel();
+  showToast("다른 기기에서 저장한 변경사항을 발견했어요. 불러오기, 업로드 또는 병합을 선택하세요.");
 }
 
 function shouldPromptForCloud(row) {
   if (!row) return false;
   if (state.items.length > 0 && getStateItemCount(row.data) === 0) return true;
   if (syncMeta.userId !== syncState.session?.user?.id || !syncMeta.lastSyncedAt) return true;
-  return new Date(row.updated_at).getTime() > new Date(syncMeta.lastSyncedAt).getTime() + 1000;
+  const remoteFingerprint = fingerprintLibraryState(row.data);
+  if (syncMeta.lastSyncedFingerprint) {
+    return remoteFingerprint !== syncMeta.lastSyncedFingerprint;
+  }
+
+  return !areLibraryStatesEqual(row.data, serializeStateForCloud());
 }
 
 function canSync() {
@@ -1961,22 +2067,25 @@ function serializeStateForCloud() {
     version: IMPORT_VERSION,
     profiles: state.profiles,
     categories: state.categories,
-    items: state.items,
+    items: state.items
+  }));
+}
+
+function applyStateObject(raw) {
+  const incoming = raw && typeof raw === "object" ? raw : {};
+  const localViewState = {
     view: state.view,
     typeFilter: state.typeFilter,
     categoryFilter: state.categoryFilter,
     slotFilter: state.slotFilter,
     query: state.query,
     sort: state.sort,
-    selectedId: state.selectedId
-  }));
-}
-
-function applyStateObject(raw) {
-  const incoming = raw && typeof raw === "object" ? raw : {};
+    selectedId: null
+  };
   state = {
     ...structuredClone(initialState),
     ...incoming,
+    ...localViewState,
     profiles: Array.isArray(incoming.profiles) ? incoming.profiles : ["나"],
     categories: Array.isArray(incoming.categories) ? incoming.categories : structuredClone(initialState.categories),
     items: Array.isArray(incoming.items) ? incoming.items : []
@@ -1987,10 +2096,14 @@ function applyStateObject(raw) {
 function mergeStateObject(raw) {
   const incoming = normalizeExternalState(raw);
   incoming.profiles.forEach((profile) => ensureProfile(String(profile)));
-  incoming.categories.forEach(mergeImportedCategory);
+  const categoryIdMap = new Map();
+  incoming.categories.forEach((category) => {
+    const merged = mergeImportedCategory(category);
+    if (merged && category.id) categoryIdMap.set(category.id, merged.id);
+  });
 
   const indexByVideo = new Map(state.items.map((item, index) => [`${item.type}:${item.videoId}`, index]));
-  incoming.items.map(cleanImportedItem).filter(Boolean).forEach((item) => {
+  incoming.items.map((item) => cleanImportedItem(item, categoryIdMap)).filter(Boolean).forEach((item) => {
     const key = `${item.type}:${item.videoId}`;
     const existingIndex = indexByVideo.get(key);
     if (existingIndex === undefined) {
@@ -2021,12 +2134,46 @@ function normalizeExternalState(raw) {
   return normalized;
 }
 
+function areLibraryStatesEqual(left, right) {
+  return canonicalLibraryJson(left) === canonicalLibraryJson(right);
+}
+
+function fingerprintLibraryState(value) {
+  const json = canonicalLibraryJson(value);
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let index = 0; index < json.length; index += 1) {
+    hash ^= BigInt(json.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * prime);
+  }
+  return `${json.length}:${hash.toString(16).padStart(16, "0")}`;
+}
+
+function canonicalLibraryJson(value) {
+  return JSON.stringify(sortJsonValue(normalizeExternalState(value)));
+}
+
+function sortJsonValue(value) {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.keys(value)
+    .sort()
+    .reduce((result, key) => {
+      result[key] = sortJsonValue(value[key]);
+      return result;
+    }, {});
+}
+
 function backupLocalState(reason) {
+  backupStateObject(serializeStateForCloud(), reason);
+}
+
+function backupStateObject(snapshot, reason) {
   const backedUpAt = new Date().toISOString();
   localStorage.setItem(`${CLOUD_BACKUP_PREFIX}${backedUpAt}`, JSON.stringify({
     reason,
     backedUpAt,
-    state: serializeStateForCloud()
+    state: normalizeExternalState(snapshot)
   }));
 }
 
@@ -2036,7 +2183,8 @@ function loadSyncMeta() {
     if (!meta || typeof meta !== "object") return {};
     return {
       userId: String(meta.userId || ""),
-      lastSyncedAt: String(meta.lastSyncedAt || "")
+      lastSyncedAt: String(meta.lastSyncedAt || ""),
+      lastSyncedFingerprint: String(meta.lastSyncedFingerprint || "")
     };
   } catch {
     return {};
@@ -2047,11 +2195,12 @@ function saveSyncMeta() {
   localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta));
 }
 
-function markCloudSynced(lastSyncedAt) {
+function markCloudSynced(lastSyncedAt, cloudData = syncState.cloudRow?.data) {
   if (!syncState.session?.user?.id || !lastSyncedAt) return;
   syncMeta = {
     userId: syncState.session.user.id,
-    lastSyncedAt
+    lastSyncedAt,
+    lastSyncedFingerprint: fingerprintLibraryState(cloudData || serializeStateForCloud())
   };
   saveSyncMeta();
 }
@@ -2841,18 +2990,22 @@ async function importLibrary(event) {
   if (!file) return;
 
   try {
+    if (file.size > MAX_IMPORT_FILE_BYTES) throw new Error("IMPORT_FILE_TOO_LARGE");
     const text = await file.text();
     const imported = JSON.parse(text);
     const incomingItems = Array.isArray(imported) ? imported : imported.items;
     if (!Array.isArray(incomingItems)) throw new Error("items missing");
+    if (incomingItems.length > MAX_IMPORT_ITEMS) throw new Error("IMPORT_TOO_MANY_ITEMS");
     const isCategoryShare = !Array.isArray(imported) && imported?.exportType === "category-share";
     const sharedCategoryName = isCategoryShare ? cleanLabel(imported.source?.categoryName, "") : "";
 
     ensureLibraryShape();
     const importedProfiles = Array.isArray(imported.profiles) ? imported.profiles : [];
+    if (importedProfiles.length > MAX_IMPORT_PROFILES) throw new Error("IMPORT_TOO_MANY_PROFILES");
     importedProfiles.forEach((profile) => ensureProfile(String(profile)));
 
     const importedCategories = Array.isArray(imported.categories) ? imported.categories : [];
+    if (importedCategories.length > MAX_IMPORT_CATEGORIES) throw new Error("IMPORT_TOO_MANY_CATEGORIES");
     const categoryIdMap = new Map();
     importedCategories.forEach((raw) => {
       const incomingId = String(typeof raw === "object" && raw?.id ? raw.id : "").trim();
@@ -2861,13 +3014,16 @@ async function importLibrary(event) {
     });
 
     const existing = new Set(state.items.map((item) => `${item.type}:${item.videoId}`));
+    const existingIds = new Set(state.items.map((item) => String(item.id || "")));
     const cleanedItems = incomingItems.map((item) => cleanImportedItem(item, categoryIdMap)).filter(Boolean);
     let added = 0;
 
     cleanedItems.forEach((item) => {
       const key = `${item.type}:${item.videoId}`;
       if (existing.has(key)) return;
+      while (existingIds.has(item.id)) item.id = createId(item.videoId);
       existing.add(key);
+      existingIds.add(item.id);
       state.items.push(item);
       added += 1;
     });
@@ -2879,14 +3035,18 @@ async function importLibrary(event) {
     showToast(isCategoryShare && sharedCategoryName
       ? `${sharedCategoryName} 공유 목록에서 ${added}개를 가져왔어요.`
       : `${added}개를 가져왔어요.`);
-  } catch {
-    showToast("가져오기 파일을 읽지 못했어요.");
+  } catch (error) {
+    const limitError = String(error?.message || "").startsWith("IMPORT_");
+    showToast(limitError
+      ? "가져오기 파일이 너무 큽니다. 8MB 이하, 항목 10,000개 이하 파일을 사용하세요."
+      : "가져오기 파일을 읽지 못했어요.");
   } finally {
     els.importInput.value = "";
   }
 }
 
 function cleanImportedItem(raw, categoryIdMap = new Map()) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const parsed = parseYoutubeUrl(raw.url || `https://www.youtube.com/watch?v=${raw.videoId || ""}`);
   if (!parsed) return null;
   const now = new Date().toISOString();
@@ -2903,7 +3063,7 @@ function cleanImportedItem(raw, categoryIdMap = new Map()) {
   });
 
   return {
-    id: raw.id || createId(parsed.videoId),
+    id: cleanImportedItemId(raw.id) || createId(parsed.videoId),
     videoId: parsed.videoId,
     type,
     url: normalizeYoutubeItemUrl(parsed.videoId, type),
@@ -2915,15 +3075,28 @@ function cleanImportedItem(raw, categoryIdMap = new Map()) {
     metadataFetchFailedAt: cleanMetadataText(raw.metadataFetchFailedAt, 40),
     authorEdited: Boolean(raw.authorEdited),
     note: String(raw.note || "").trim(),
-    tags: Array.isArray(raw.tags) ? raw.tags.map(String).map((tag) => tag.trim()).filter(Boolean) : parseTags(raw.tags || ""),
-    profile: String(raw.profile || "나").trim() || "나",
+    tags: cleanImportedTags(raw.tags),
+    profile: cleanLabel(raw.profile, "나"),
     categoryId,
     slot,
     status: raw.status === "done" ? "done" : "queue",
     favorite: Boolean(raw.favorite),
-    createdAt: raw.createdAt || now,
-    updatedAt: raw.updatedAt || now
+    createdAt: isValidDateString(raw.createdAt) ? raw.createdAt : now,
+    updatedAt: isValidDateString(raw.updatedAt) ? raw.updatedAt : now
   };
+}
+
+function cleanImportedItemId(value) {
+  const id = String(value || "").trim().slice(0, 120);
+  return /^[a-zA-Z0-9_-]+$/.test(id) ? id : "";
+}
+
+function cleanImportedTags(value) {
+  const tags = Array.isArray(value) ? value : parseTags(value || "");
+  return [...new Set(tags
+    .map(String)
+    .map((tag) => tag.trim())
+    .filter(Boolean))];
 }
 
 function ensureCategoryOptions() {
@@ -2966,7 +3139,9 @@ function renderSlotOptions(categorySelect, slotSelect, preferredSlot = slotSelec
 
 function ensureLibraryShape() {
   state.profiles = Array.isArray(state.profiles) ? state.profiles : ["나"];
-  state.items = Array.isArray(state.items) ? state.items : [];
+  state.items = Array.isArray(state.items)
+    ? state.items.filter((item) => item && typeof item === "object" && !Array.isArray(item))
+    : [];
 
   const cleanedCategories = [];
   const seenIds = new Set();
@@ -3212,7 +3387,7 @@ function cleanMetadataText(value, maxLength = 200) {
 }
 
 function normalizeVideoId(value) {
-  const videoId = String(value || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
+  const videoId = String(value || "").trim();
   return /^[a-zA-Z0-9_-]{11}$/.test(videoId) ? videoId : "";
 }
 
@@ -3298,7 +3473,12 @@ function persist({ allowEmptyOverwrite = false } = {}) {
     showToast("기존 목록을 빈 목록으로 덮어쓰지 않도록 저장을 중단했어요. 데이터 이전에서 백업을 확인하세요.");
     return false;
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    showToast("브라우저 저장공간이 부족해 저장하지 못했어요. 먼저 내보내기로 백업한 뒤 불필요한 항목을 정리하세요.");
+    return false;
+  }
   scheduleCloudSave();
   return true;
 }

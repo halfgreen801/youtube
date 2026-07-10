@@ -1,4 +1,5 @@
-const CACHE_NAME = "gaegol-tube-shell-v18";
+const CACHE_PREFIX = "gaegol-tube-shell-";
+const CACHE_NAME = `${CACHE_PREFIX}v19`;
 const SHELL_FILES = [
   "./",
   "./index.html",
@@ -14,14 +15,15 @@ const SHELL_FILES = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES)));
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
       .then((keys) =>
-        Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))
+        Promise.all(keys
+          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+          .map((key) => caches.delete(key)))
       )
       .then(() => self.clients.claim())
   );
@@ -61,18 +63,23 @@ async function networkFirst(request) {
   const cache = await caches.open(CACHE_NAME);
   try {
     const response = await fetch(request);
-    cache.put(request, response.clone());
+    if (response.ok) await cache.put(request, response.clone());
     return response;
   } catch {
-    return (await caches.match(request)) || Response.error();
+    const cached = await cache.match(request, { ignoreSearch: true });
+    if (cached) return cached;
+    if (request.mode === "navigate") {
+      return (await cache.match("./index.html")) || Response.error();
+    }
+    return Response.error();
   }
 }
 
 async function cacheFirst(request) {
-  const cached = await caches.match(request);
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
   if (cached) return cached;
   const response = await fetch(request);
-  const cache = await caches.open(CACHE_NAME);
-  cache.put(request, response.clone());
+  if (response.ok) await cache.put(request, response.clone());
   return response;
 }

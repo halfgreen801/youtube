@@ -2,8 +2,9 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://www.youtube.com https://youtube.com; img-src 'self' data: blob: https://i.ytimg.com https://img.youtube.com https://*.ggpht.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'; worker-src 'self'; upgrade-insecure-requests;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; script-src-attr 'none'; connect-src 'self' https://uhwqzujuerceoysiuupa.supabase.co wss://uhwqzujuerceoysiuupa.supabase.co https://www.youtube.com; img-src 'self' data: blob: https://i.ytimg.com; frame-src https://www.youtube-nocookie.com; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self'; worker-src 'self'; upgrade-insecure-requests;">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
     <meta name="theme-color" content="#4fa88f">
     <title>개골튜브</title>
     <link rel="manifest" href="manifest.webmanifest">
@@ -143,11 +144,11 @@
             <form id="syncAuthForm" class="sync-auth" hidden>
               <label>
                 이메일
-                <input id="syncEmail" type="email" autocomplete="email" placeholder="name@example.com">
+                <input id="syncEmail" type="email" autocomplete="email" maxlength="254" required placeholder="name@example.com">
               </label>
               <label>
                 비밀번호
-                <input id="syncPassword" type="password" autocomplete="current-password" placeholder="비밀번호">
+                <input id="syncPassword" type="password" autocomplete="current-password" maxlength="256" required placeholder="비밀번호">
               </label>
               <div class="sync-actions">
                 <button class="primary-button" id="syncLoginButton" type="submit">로그인</button>

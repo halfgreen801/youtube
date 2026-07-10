@@ -118,6 +118,10 @@ window.TUBE_VAULT_CONFIG = {
 
 `allowSignup`이 `false`이면 앱 안의 회원가입 버튼은 숨겨집니다. 이것은 앱 UI 설정일 뿐이며, 실제 공개 회원가입 차단은 Supabase 대시보드의 `Authentication` 설정에서 해야 합니다. 개인용 앱이라면 Supabase 대시보드에서 내 계정을 만든 뒤 공개 회원가입을 끄고 `allowSignup: false`로 두는 구성이 안전합니다.
 
+- 자동 저장 전에 마지막 동기화 목록의 지문과 현재 클라우드 목록을 비교합니다. 기기 시간이 서로 달라도 다른 기기 변경이 발견되면 자동 덮어쓰기를 멈추고 불러오기/업로드/병합 선택을 표시합니다.
+- `현재 기기 데이터 업로드`로 기존 클라우드 목록을 덮어쓸 때는 한 번 더 확인하고, 덮어쓰기 전 클라우드 상태를 이 기기의 백업으로 남깁니다.
+- 검색어, 현재 필터, 정렬처럼 기기마다 달라도 되는 화면 상태는 클라우드에 올리지 않고 목록·카테고리·분류 칸만 동기화합니다.
+
 ## 보안 주의사항
 
 - `service_role` key, 관리자 키, 개인 토큰은 절대 브라우저 코드에 넣지 마세요.
@@ -127,7 +131,9 @@ window.TUBE_VAULT_CONFIG = {
 - 데이터 보호의 핵심은 `supabase/schema.sql`의 Row Level Security입니다.
 - 반드시 Supabase SQL Editor에서 `supabase/schema.sql`을 실행하고 RLS 정책이 켜져 있는지 확인하세요.
 - `public.tube_vault_states`는 `auth.uid()`가 `user_id`와 같은 행만 읽고 쓸 수 있어야 합니다.
-- Supabase JS는 CDN에서 매번 동적으로 불러오지 않고 `vendor/supabase-js.min.js`에 고정 버전으로 포함합니다.
+- `supabase/schema.sql`은 RLS를 강제하고 `anon` 역할의 테이블 권한을 회수하며, `data`가 JSON 객체인지도 검사합니다. 기존 프로젝트에서도 최신 파일을 다시 실행하세요.
+- Supabase JS는 CDN에서 매번 동적으로 불러오지 않고 `vendor/supabase-js.min.js`에 고정 버전 `2.108.2`로 포함합니다.
+- CSP의 Supabase 연결 주소는 현재 프로젝트로 제한되어 있습니다. Supabase 프로젝트를 바꾸면 `config.js`와 `index.html`의 `connect-src` 주소를 함께 바꿔야 로그인이 작동합니다.
 
 RLS 설정 확인용 SQL:
 
@@ -156,6 +162,7 @@ where schemaname = 'public'
 - `내보내기`: 현재 저장된 링크, 카테고리, 분류 칸을 JSON 파일로 저장합니다.
 - `데이터 이전`: 현재 실행공간의 모드, 주소, 저장 키, 항목 수를 확인하고 이전용 백업 파일을 만듭니다.
 - `가져오기`: JSON 파일의 항목을 현재 기기 데이터에 병합합니다. 이미 있는 같은 영상/숏츠는 건너뜁니다.
+- 가져오기 파일은 브라우저가 멈추거나 저장공간이 가득 차는 것을 막기 위해 8MB 이하, 항목 10,000개 이하만 허용합니다.
 - 새 내보내기 파일명은 `gaegol-tube-YYYY-MM-DD.json` 형식입니다. 기존 `tube-vault` 파일도 계속 가져올 수 있습니다.
 - 데이터 이전 백업 파일명은 `gaegol-tube-migration-YYYY-MM-DD.json` 형식입니다.
 - 클라우드 데이터를 불러오기 전에는 앱이 자동으로 `tubeVaultBackupBeforeCloudPull:<timestamp>` localStorage 백업을 만듭니다.
@@ -273,6 +280,10 @@ where schemaname = 'public'
 - 초기화 버튼을 누르면 기본 파스텔 테마로 돌아간다.
 - Supabase 설정값이 비어 있어도 console fatal error가 없다.
 - Supabase 설정 후 로그인/로그아웃이 된다.
+- 다른 기기에서 클라우드 데이터가 바뀐 뒤 로컬 저장을 시도하면 자동 덮어쓰기 대신 동기화 선택 화면이 보인다.
+- 악성 도메인에 `youtube.com` 문자열만 들어간 주소는 YouTube 링크로 저장되지 않는다.
+- 미리보기 iframe은 `youtube-nocookie.com` 주소와 제한된 권한으로 생성된다.
+- 서비스 워커 업데이트는 사용자가 `새 버전 적용`을 누를 때 활성화되고, 다른 앱 이름의 캐시는 삭제하지 않는다.
 - 로그인 후 수동 동기화가 된다.
 - 다른 기기 또는 다른 브라우저에서 같은 계정으로 로그인하면 클라우드 데이터를 불러올 수 있다.
 - 오프라인 상태에서도 로컬 저장은 된다.

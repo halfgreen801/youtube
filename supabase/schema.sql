@@ -5,6 +5,16 @@ create table if not exists public.tube_vault_states (
 );
 
 alter table public.tube_vault_states enable row level security;
+alter table public.tube_vault_states force row level security;
+
+alter table public.tube_vault_states
+  drop constraint if exists tube_vault_states_data_is_object;
+alter table public.tube_vault_states
+  add constraint tube_vault_states_data_is_object
+  check (jsonb_typeof(data) = 'object');
+
+revoke all on table public.tube_vault_states from anon;
+grant select, insert, update, delete on table public.tube_vault_states to authenticated;
 
 drop policy if exists "Users can select own tube vault state" on public.tube_vault_states;
 create policy "Users can select own tube vault state"

@@ -2,6 +2,8 @@
   "name": "개골튜브",
   "short_name": "개골튜브",
   "description": "개골튜브는 YouTube 계정과 분리해서 영상과 숏츠 링크를 저장하는 개인 보관함입니다",
+  "id": "./",
+  "lang": "ko",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
