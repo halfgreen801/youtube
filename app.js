@@ -1,5 +1,5 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.07.11.1";
+const APP_VERSION = "2026.07.12.2";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
@@ -36,19 +36,22 @@ const YOUTUBE_HOSTS = new Set([
   "www.youtube-nocookie.com"
 ]);
 const DEFAULT_THEME = {
-  bg: "#fff8f1",
+  mode: "system",
+  customized: false,
+  bg: "#f5f5f7",
   surface: "#ffffff",
-  surfaceStrong: "#fff1f5",
-  ink: "#263238",
-  muted: "#6f7d85",
-  line: "#eadde7",
-  lineStrong: "#d9c5d3",
-  accent: "#7bcfb2",
-  accentDark: "#4fa88f",
-  blue: "#8fb7ff",
-  red: "#f08a8a",
-  amber: "#f6c177"
+  surfaceStrong: "#f2f2f4",
+  ink: "#1d1d1f",
+  muted: "#6e6e73",
+  line: "#e5e5e7",
+  lineStrong: "#d2d2d7",
+  accent: "#0071e3",
+  accentDark: "#0066cc",
+  blue: "#2997ff",
+  red: "#d70015",
+  amber: "#b25000"
 };
+const THEME_MODES = ["system", "light", "dark"];
 const THEME_FIELDS = [
   ["bg", "--bg"],
   ["surface", "--surface"],
@@ -108,6 +111,7 @@ let toastTimer = 0;
 let deferredInstallPrompt = null;
 let waitingServiceWorker = null;
 let refreshingForServiceWorker = false;
+let serviceWorkerUpdateRequested = false;
 let currentPage = 1;
 let pageSize = loadPageSize();
 let categorySortMode = loadCategorySortMode();
@@ -127,12 +131,16 @@ const syncState = {
   status: "local",
   errorMessage: "",
   cloudRow: null,
+  cloudChecked: false,
+  pendingAction: "none",
+  lastResult: "",
   needsCloudChoice: false,
   saveTimer: 0,
   writeQueue: Promise.resolve()
 };
 
 const els = {
+  headerMenu: $("#headerMenu"),
   saveForm: $("#saveForm"),
   urlInput: $("#urlInput"),
   titleInput: $("#titleInput"),
@@ -149,6 +157,7 @@ const els = {
   categoryFilter: $("#categoryFilter"),
   typeFilter: $("#typeFilter"),
   slotCloud: $("#slotCloud"),
+  resetFiltersButton: $("#resetFiltersButton"),
   searchInput: $("#searchInput"),
   hydrateMetadataButton: $("#hydrateMetadataButton"),
   sortInput: $("#sortInput"),
@@ -166,6 +175,9 @@ const els = {
   pageTotalText: $("#pageTotalText"),
   videoGrid: $("#videoGrid"),
   emptyState: $("#emptyState"),
+  emptyStateTitle: $("#emptyStateTitle"),
+  emptyStateDescription: $("#emptyStateDescription"),
+  emptyStateAction: $("#emptyStateAction"),
   migrationEmptyNote: $("#migrationEmptyNote"),
   cardTemplate: $("#videoCardTemplate"),
   playerPanel: $("#playerPanel"),
@@ -184,6 +196,8 @@ const els = {
   categoryManageForm: $("#categoryManageForm"),
   categorySortMode: $("#categorySortMode"),
   categorySortHelp: $("#categorySortHelp"),
+  categoryNewNameInput: $("#categoryNewNameInput"),
+  categoryAddButton: $("#categoryAddButton"),
   categoryManageList: $("#categoryManageList"),
   categoryDeleteDialog: $("#categoryDeleteDialog"),
   categoryDeleteForm: $("#categoryDeleteForm"),
@@ -229,6 +243,7 @@ const els = {
   downloadCategoryShareButton: $("#downloadCategoryShareButton"),
   themeDialog: $("#themeDialog"),
   themeForm: $("#themeForm"),
+  themeMode: $("#themeMode"),
   themeInputs: $$("[data-theme-key]"),
   resetThemeButton: $("#resetThemeButton"),
   editDialog: $("#editDialog"),
@@ -247,6 +262,11 @@ const els = {
   syncStatusBadge: $("#syncStatusBadge"),
   syncDescription: $("#syncDescription"),
   syncLastSync: $("#syncLastSync"),
+  syncAccountValue: $("#syncAccountValue"),
+  syncLocalCount: $("#syncLocalCount"),
+  syncCloudCount: $("#syncCloudCount"),
+  syncDirectionValue: $("#syncDirectionValue"),
+  syncLastSyncValue: $("#syncLastSyncValue"),
   syncAuthForm: $("#syncAuthForm"),
   syncEmail: $("#syncEmail"),
   syncPassword: $("#syncPassword"),
@@ -272,12 +292,31 @@ function init() {
   ensureLibraryShape();
   ensureCategoryOptions();
   bindEvents();
+  configureHeaderMenu();
   updateTypeInputHelp();
   wireThemeSettings();
   render();
   initSync();
   registerServiceWorker();
   hydrateMissingTitles();
+}
+
+function configureHeaderMenu() {
+  if (!els.headerMenu || typeof window.matchMedia !== "function") return;
+  const media = window.matchMedia("(max-width: 640px)");
+  const syncMenuState = (query) => {
+    if (query.matches) {
+      els.headerMenu.removeAttribute("open");
+    } else {
+      els.headerMenu.setAttribute("open", "");
+    }
+  };
+  syncMenuState(media);
+  if (typeof media.addEventListener === "function") {
+    media.addEventListener("change", syncMenuState);
+  } else if (typeof media.addListener === "function") {
+    media.addListener(syncMenuState);
+  }
 }
 
 function bindEvents() {
@@ -335,12 +374,20 @@ function bindEvents() {
     if (event.key === "Enter") handlePageJump(event);
   });
   els.slotCloud.addEventListener("click", handleSlotFilter);
+  els.resetFiltersButton.addEventListener("click", resetLibraryFilters);
+  els.emptyStateAction.addEventListener("click", handleEmptyStateAction);
   els.videoGrid.addEventListener("click", handleCardAction);
   els.closePlayerButton?.addEventListener("click", closePlayer);
   els.exportButton.addEventListener("click", exportLibrary);
   els.importInput.addEventListener("change", importLibrary);
   els.categoryManageButton.addEventListener("click", openCategoryManageDialog);
   els.categorySortMode?.addEventListener("change", handleCategorySortModeChange);
+  els.categoryAddButton.addEventListener("click", addCategoryFromManage);
+  els.categoryNewNameInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    addCategoryFromManage();
+  });
   els.categoryManageForm.addEventListener("submit", handleCategoryManageSubmit);
   els.categoryManageList.addEventListener("click", handleCategoryManageAction);
   els.categoryManageList.addEventListener("dragstart", handleCategoryDragStart);
@@ -372,6 +419,7 @@ function bindEvents() {
   els.cloudPullButton.addEventListener("click", pullCloudState);
   els.cloudPushButton.addEventListener("click", pushLocalState);
   els.cloudMergeButton.addEventListener("click", mergeCloudState);
+  document.addEventListener("keydown", handleGlobalEscape);
 
   window.addEventListener("storage", (event) => {
     if (event.key === STORAGE_KEY) {
@@ -420,6 +468,25 @@ function bindEvents() {
   });
 
   configureInstallButton();
+}
+
+function handleGlobalEscape(event) {
+  if (event.key !== "Escape") return;
+  const openDialogs = $$('dialog[open]');
+  const openDialogElement = openDialogs[openDialogs.length - 1];
+  if (openDialogElement) {
+    event.preventDefault();
+    if (openDialogElement === els.themeDialog) {
+      closeThemeDialog(false);
+    } else {
+      closeDialog(openDialogElement);
+    }
+    return;
+  }
+
+  if (els.headerMenu?.open && window.matchMedia("(max-width: 640px)").matches) {
+    els.headerMenu.removeAttribute("open");
+  }
 }
 
 function configureInstallButton() {
@@ -596,6 +663,26 @@ function handleSlotFilter(event) {
   persistAndRender();
 }
 
+function resetLibraryFilters() {
+  state.view = "all";
+  state.typeFilter = "all";
+  state.categoryFilter = "all";
+  state.slotFilter = "all";
+  state.query = "";
+  resetToFirstPage();
+  persistAndRender();
+  showToast("검색과 필터를 초기화했어요.");
+}
+
+function handleEmptyStateAction() {
+  if (state.items.length === 0) {
+    els.urlInput.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => els.urlInput.focus(), 220);
+    return;
+  }
+  resetLibraryFilters();
+}
+
 function handleCardAction(event) {
   const card = event.target.closest(".video-card");
   if (!card) return;
@@ -650,6 +737,27 @@ function addCategory(target) {
   ensureCategoryOptions();
   setCategoryTarget(target, category.id, DEFAULT_SLOT);
   persist();
+  showToast(`${category.name} 카테고리를 추가했어요.`);
+}
+
+function addCategoryFromManage() {
+  const cleaned = cleanLabel(els.categoryNewNameInput.value, "");
+  if (!cleaned) {
+    showToast("새 카테고리 이름을 입력하세요.");
+    els.categoryNewNameInput.focus();
+    return;
+  }
+
+  const existing = state.categories.find((category) => category.name === cleaned);
+  const category = ensureCategory(cleaned);
+  els.categoryNewNameInput.value = "";
+  persistAndRender();
+  renderCategoryManageList();
+
+  if (existing) {
+    showToast(`${category.name} 카테고리는 이미 있어요.`);
+    return;
+  }
   showToast(`${category.name} 카테고리를 추가했어요.`);
 }
 
@@ -774,7 +882,9 @@ function render() {
 
 function renderFilterState() {
   $$("[data-view]", els.viewFilters).forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === state.view);
+    const isActive = button.dataset.view === state.view;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
   });
 
   els.categoryFilter.innerHTML = "";
@@ -783,6 +893,7 @@ function renderFilterState() {
   getOrderedCategories().forEach((category) => els.categoryFilter.add(new Option(category.name, category.id)));
   els.categoryFilter.value = state.categoryFilter;
   els.typeFilter.value = state.typeFilter || "all";
+  els.resetFiltersButton.disabled = !hasActiveItemFilter();
 }
 
 function renderSlotFilters() {
@@ -797,6 +908,7 @@ function renderSlotFilters() {
   allButton.className = `slot-button ${state.slotFilter === "all" ? "active" : ""}`;
   allButton.dataset.slot = "all";
   allButton.textContent = "모든 분류 칸";
+  allButton.setAttribute("aria-pressed", String(state.slotFilter === "all"));
   els.slotCloud.append(allButton);
 
   slots.forEach((slot) => {
@@ -805,13 +917,14 @@ function renderSlotFilters() {
     button.className = `slot-button ${state.slotFilter === slot ? "active" : ""}`;
     button.dataset.slot = slot;
     button.textContent = slot;
+    button.setAttribute("aria-pressed", String(state.slotFilter === slot));
     els.slotCloud.append(button);
   });
 }
 
 function renderCards(items, filteredItemCount) {
   els.videoGrid.innerHTML = "";
-  els.emptyState.hidden = filteredItemCount > 0;
+  renderEmptyState(filteredItemCount);
   renderMigrationEmptyNote(filteredItemCount);
 
   items.forEach((item) => {
@@ -826,6 +939,10 @@ function renderCards(items, filteredItemCount) {
     typeBadge.textContent = getTypeLabel(item.type);
     typeBadge.classList.add(getTypeClass(item.type));
 
+    const statusBadge = $(".status-badge", node);
+    statusBadge.textContent = item.status === "done" ? "봤음" : "볼 예정";
+    statusBadge.classList.toggle("is-done", item.status === "done");
+
     $(".category-badge", node).textContent = getCategoryName(item.categoryId);
     $(".slot-badge", node).textContent = item.slot || DEFAULT_SLOT;
     $(".card-title", node).textContent = displayTitle(item);
@@ -838,10 +955,16 @@ function renderCards(items, filteredItemCount) {
     const favoriteButton = $(".favorite-button", node);
     favoriteButton.textContent = item.favorite ? "★" : "☆";
     favoriteButton.classList.toggle("active", item.favorite);
+    favoriteButton.title = item.favorite ? "즐겨찾기 해제" : "즐겨찾기";
+    favoriteButton.setAttribute("aria-label", favoriteButton.title);
+    favoriteButton.setAttribute("aria-pressed", String(Boolean(item.favorite)));
 
     const statusButton = $(".status-button", node);
     statusButton.classList.toggle("done", item.status === "done");
     statusButton.title = item.status === "done" ? "볼 예정으로 변경" : "봤음 표시";
+    statusButton.textContent = item.status === "done" ? "↺" : "✓";
+    statusButton.setAttribute("aria-label", statusButton.title);
+    statusButton.setAttribute("aria-pressed", String(item.status === "done"));
 
     const openButton = $(".open-button", node);
     const safeYoutubeUrl = normalizeYoutubeItemUrl(item.videoId, normalizeItemType(item));
@@ -849,6 +972,25 @@ function renderCards(items, filteredItemCount) {
     openButton.hidden = !safeYoutubeUrl;
     els.videoGrid.append(node);
   });
+}
+
+function renderEmptyState(filteredItemCount) {
+  const libraryIsEmpty = state.items.length === 0;
+  const hasNoResults = !libraryIsEmpty && filteredItemCount === 0;
+  els.emptyState.hidden = !libraryIsEmpty && !hasNoResults;
+
+  if (libraryIsEmpty) {
+    els.emptyStateTitle.textContent = "아직 저장된 영상이 없습니다.";
+    els.emptyStateDescription.textContent = "YouTube 링크를 붙여넣으면 이곳에서 다시 찾아볼 수 있습니다.";
+    els.emptyStateAction.textContent = "첫 영상 저장하기";
+    return;
+  }
+
+  if (hasNoResults) {
+    els.emptyStateTitle.textContent = "검색 결과가 없습니다.";
+    els.emptyStateDescription.textContent = "다른 검색어나 필터를 사용해 보세요.";
+    els.emptyStateAction.textContent = "필터 초기화";
+  }
 }
 
 function renderMigrationEmptyNote(visibleItemCount) {
@@ -1101,6 +1243,7 @@ function renderPageNumberButtons(totalItems, totalPages) {
   els.pageNumberList.innerHTML = "";
   const pages = getPageWindow(currentPage, totalPages);
   let previousPage = 0;
+  let currentPageButton = null;
 
   pages.forEach((page) => {
     if (previousPage && page - previousPage > 1) {
@@ -1117,10 +1260,19 @@ function renderPageNumberButtons(totalItems, totalPages) {
     button.textContent = String(page);
     button.disabled = totalItems === 0;
     button.setAttribute("aria-label", `${page}페이지로 이동`);
-    if (page === currentPage) button.setAttribute("aria-current", "page");
+    if (page === currentPage) {
+      button.setAttribute("aria-current", "page");
+      currentPageButton = button;
+    }
     els.pageNumberList.append(button);
     previousPage = page;
   });
+
+  if (currentPageButton && els.pageNumberList.scrollWidth > els.pageNumberList.clientWidth) {
+    const centeredOffset = currentPageButton.offsetLeft
+      - (els.pageNumberList.clientWidth - currentPageButton.offsetWidth) / 2;
+    els.pageNumberList.scrollLeft = Math.max(0, centeredOffset);
+  }
 }
 
 function getPageWindow(page, totalPages) {
@@ -1404,11 +1556,18 @@ function applyMetadataToItem(item, metadata) {
 function updateHydrateMetadataButton(isBusy) {
   if (!els.hydrateMetadataButton) return;
   els.hydrateMetadataButton.disabled = isBusy;
-  els.hydrateMetadataButton.textContent = isBusy ? "가져오는 중..." : "유튜버명 보강";
+  els.hydrateMetadataButton.textContent = isBusy ? "가져오는 중..." : "정보 보강";
 }
 
 function wireThemeSettings() {
   els.themeButton.addEventListener("click", openThemeDialog);
+  els.themeMode.addEventListener("change", () => {
+    draftTheme = {
+      ...draftTheme,
+      mode: normalizeThemeMode(els.themeMode.value)
+    };
+    applyTheme(draftTheme);
+  });
   els.themeForm.addEventListener("submit", (event) => {
     event.preventDefault();
     if (event.submitter?.value === "cancel") {
@@ -1416,7 +1575,7 @@ function wireThemeSettings() {
       return;
     }
     saveTheme(draftTheme);
-    currentTheme = { ...draftTheme };
+    currentTheme = normalizeTheme(draftTheme);
     themeDialogSaved = true;
     closeDialog(els.themeDialog);
     showToast("색상 설정을 저장했어요.");
@@ -1442,11 +1601,13 @@ function wireThemeSettings() {
       if (!Object.prototype.hasOwnProperty.call(DEFAULT_THEME, key) || !isValidHexColor(input.value)) return;
       draftTheme = {
         ...draftTheme,
-        [key]: input.value
+        [key]: input.value,
+        customized: true
       };
       applyTheme(draftTheme);
     });
   });
+  wireSystemThemeListener();
 }
 
 function loadTheme() {
@@ -1454,13 +1615,20 @@ function loadTheme() {
     const stored = JSON.parse(localStorage.getItem(THEME_STORAGE_KEY));
     if (!stored || typeof stored !== "object") return { ...DEFAULT_THEME };
 
-    const merged = { ...DEFAULT_THEME, ...stored };
+    const isLegacyTheme = !Object.prototype.hasOwnProperty.call(stored, "mode")
+      && !Object.prototype.hasOwnProperty.call(stored, "customized");
+    const merged = {
+      ...DEFAULT_THEME,
+      ...stored,
+      mode: normalizeThemeMode(stored.mode),
+      customized: isLegacyTheme || stored.customized === true
+    };
     const valid = THEME_FIELDS.every(([key]) => isValidHexColor(merged[key]));
     if (!valid) {
       localStorage.removeItem(THEME_STORAGE_KEY);
       return { ...DEFAULT_THEME };
     }
-    return merged;
+    return normalizeTheme(merged);
   } catch {
     localStorage.removeItem(THEME_STORAGE_KEY);
     return { ...DEFAULT_THEME };
@@ -1474,19 +1642,30 @@ function saveTheme(theme) {
 
 function applyTheme(theme) {
   const normalized = normalizeTheme(theme);
+  document.documentElement.setAttribute("data-color-mode", normalized.mode);
   THEME_FIELDS.forEach(([key, variable]) => {
-    document.documentElement.style.setProperty(variable, normalized[key]);
+    if (normalized.customized) {
+      document.documentElement.style.setProperty(variable, normalized[key]);
+    } else {
+      document.documentElement.style.removeProperty(variable);
+    }
   });
 
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
-  if (metaThemeColor) metaThemeColor.setAttribute("content", normalized.accentDark || normalized.ink);
+  if (metaThemeColor) {
+    const resolvedMode = getResolvedThemeMode(normalized.mode);
+    const themeColor = normalized.customized
+      ? normalized.bg
+      : resolvedMode === "dark" ? "#000000" : "#f5f5f7";
+    metaThemeColor.setAttribute("content", themeColor);
+  }
 }
 
 function resetTheme() {
   draftTheme = { ...DEFAULT_THEME };
   applyTheme(DEFAULT_THEME);
   fillThemeInputs(DEFAULT_THEME);
-  showToast("기본 파스텔 색상을 미리 적용했어요. 저장해야 유지됩니다.");
+  showToast("기본 화면 설정을 미리 적용했어요. 저장해야 유지됩니다.");
 }
 
 function openThemeDialog() {
@@ -1507,6 +1686,7 @@ function closeThemeDialog(saveChanges = false) {
 }
 
 function fillThemeInputs(theme) {
+  els.themeMode.value = normalizeThemeMode(theme.mode);
   els.themeInputs.forEach((input) => {
     const key = input.dataset.themeKey;
     input.value = isValidHexColor(theme[key]) ? theme[key] : DEFAULT_THEME[key];
@@ -1515,10 +1695,40 @@ function fillThemeInputs(theme) {
 
 function normalizeTheme(theme) {
   const source = theme && typeof theme === "object" ? theme : {};
-  return THEME_FIELDS.reduce((result, [key]) => {
-    result[key] = isValidHexColor(source[key]) ? source[key] : DEFAULT_THEME[key];
-    return result;
-  }, {});
+  const result = {
+    mode: normalizeThemeMode(source.mode),
+    customized: source.customized === true
+  };
+  return THEME_FIELDS.reduce((normalized, [key]) => {
+    normalized[key] = isValidHexColor(source[key]) ? source[key] : DEFAULT_THEME[key];
+    return normalized;
+  }, result);
+}
+
+function normalizeThemeMode(value) {
+  return THEME_MODES.includes(value) ? value : DEFAULT_THEME.mode;
+}
+
+function getResolvedThemeMode(mode) {
+  if (mode === "light" || mode === "dark") return mode;
+  if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+  return "light";
+}
+
+function wireSystemThemeListener() {
+  if (typeof window.matchMedia !== "function") return;
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const refreshThemeColor = () => {
+    const previewTheme = els.themeDialog.open ? draftTheme : currentTheme;
+    if (normalizeThemeMode(previewTheme.mode) === "system") applyTheme(previewTheme);
+  };
+  if (typeof media.addEventListener === "function") {
+    media.addEventListener("change", refreshThemeColor);
+  } else if (typeof media.addListener === "function") {
+    media.addListener(refreshThemeColor);
+  }
 }
 
 function isValidHexColor(value) {
@@ -1564,12 +1774,19 @@ async function initSync() {
     renderSyncPanel();
 
     syncState.client.auth.onAuthStateChange((_event, session) => {
+      const previousUserId = syncState.session?.user?.id || "";
       syncState.session = session || null;
       syncState.errorMessage = "";
+      const nextUserId = syncState.session?.user?.id || "";
+      if (!syncState.session || previousUserId !== nextUserId) {
+        syncState.cloudRow = null;
+        syncState.cloudChecked = false;
+        syncState.pendingAction = "none";
+        syncState.lastResult = "";
+        syncState.needsCloudChoice = false;
+      }
       if (!syncState.session) {
         syncState.status = "local";
-        syncState.cloudRow = null;
-        syncState.needsCloudChoice = false;
       }
       renderSyncPanel();
       if (syncState.session) {
@@ -1612,53 +1829,84 @@ function loadSupabaseClientScript() {
 }
 
 function renderSyncPanel() {
-  const localDescription = "현재 저장한 링크는 이 브라우저의 localStorage에 저장됩니다. 같은 주소로 다른 기기에서 접속해도 자동으로 보이지 않습니다.";
-  const setupHint = "여러 기기 동기화를 사용하려면 Supabase 설정 후 로그인하세요.";
   const signedIn = Boolean(syncState.session);
   const lastSyncedAt = syncMeta.userId === syncState.session?.user?.id ? syncMeta.lastSyncedAt : "";
   const cloudItemCount = getStateItemCount(syncState.cloudRow?.data);
   const localItemCount = state.items.length;
-  let badge = "이 기기에만 저장 중";
-  let detail = setupHint;
+  const accountEmail = signedIn ? String(syncState.session.user.email || "계정") : "로그인 필요";
+  let badge = "로그인 필요";
+  let badgeState = "local";
+  let detail = "같은 이메일 계정으로 로그인한 기기끼리만 목록을 동기화합니다.";
 
   if (syncState.status === "error") {
     badge = "동기화 실패";
-    detail = "동기화 실패. 로컬 저장은 유지되었습니다.";
+    badgeState = "error";
+    detail = syncState.errorMessage || "동기화에 실패했습니다. 이 기기 목록은 그대로 유지됩니다.";
   } else if (signedIn && syncState.busy) {
-    badge = "클라우드 동기화 중";
-    detail = `클라우드 동기화 중 / 마지막 동기화: ${formatSyncTime(lastSyncedAt)}`;
-  } else if (signedIn && syncState.needsCloudChoice) {
-    badge = "동기화 선택 필요";
-    detail = "클라우드 데이터와 현재 기기 데이터 중 사용할 방식을 선택하세요.";
-  } else if (signedIn && syncState.available) {
-    badge = "클라우드 동기화됨";
-    detail = `클라우드 연결됨 / 마지막 동기화: ${formatSyncTime(lastSyncedAt)}`;
+    badge = "동기화 중";
+    badgeState = "syncing";
+    detail = "이 기기와 클라우드의 변경사항을 비교하고 있습니다.";
+  } else if (!syncState.configured) {
+    badge = "이 기기에만 저장";
+    detail = "클라우드 설정이 없어 현재 브라우저에만 저장됩니다.";
   } else if (syncState.configured && syncState.status === "unavailable") {
+    badge = "연결 불가";
+    badgeState = "error";
     detail = "Supabase 클라이언트를 불러오지 못했습니다. 로컬 저장은 계속 사용할 수 있습니다.";
-  } else if (syncState.configured) {
-    detail = "Supabase 설정이 감지되었습니다. 로그인하면 이 계정의 데이터만 동기화됩니다.";
-  }
-
-  if (signedIn && !syncState.needsCloudChoice) {
-    detail = `${detail} 여러 기기에서 자동으로 같은 목록을 보려면 로그인 동기화를 사용하세요. 단, 처음 로그인할 때는 목록이 있는 기기에서 먼저 현재 기기 데이터 업로드를 해야 합니다.`;
-  }
-
-  if (!syncState.online) {
-    detail = `${detail} 오프라인 상태라 로컬 저장만 진행됩니다.`;
+  } else if (!signedIn) {
+    detail = "같은 이메일 계정으로 로그인하면 동기화 버튼 하나로 목록을 맞출 수 있습니다.";
+  } else if (!syncState.online) {
+    badge = "오프라인";
+    badgeState = "offline";
+    detail = "인터넷 연결 후 지금 동기화를 누르세요. 이 기기 저장은 계속 사용할 수 있습니다.";
+  } else if (syncState.pendingAction === "upload") {
+    badge = "업로드 필요";
+    badgeState = "pending";
+    detail = "이 기기 목록이 더 최신입니다. 지금 동기화를 누르면 클라우드에 반영합니다.";
+  } else if (syncState.pendingAction === "download") {
+    badge = "클라우드 변경 있음";
+    badgeState = "pending";
+    detail = "다른 기기의 변경사항이 있습니다. 지금 동기화를 누르면 이 기기에 반영합니다.";
+  } else if (syncState.pendingAction === "merge") {
+    badge = "자동 병합 준비";
+    badgeState = "pending";
+    detail = "이 기기와 클라우드가 모두 변경됐습니다. 지금 동기화를 누르면 자동으로 병합합니다.";
+  } else if (syncState.status === "synced") {
+    badge = "동기화 완료";
+    badgeState = "success";
+    detail = syncState.lastResult || "이 기기와 클라우드가 같은 상태입니다.";
+  } else if (signedIn && syncState.available) {
+    badge = "계정 연결됨";
+    badgeState = "connected";
+    detail = "클라우드 상태를 확인했습니다. 지금 동기화를 누르면 양쪽 목록을 자동 비교합니다.";
   }
 
   els.syncStatusBadge.textContent = badge;
-  els.syncDescription.textContent = localDescription;
+  els.syncStatusBadge.dataset.state = badgeState;
+  els.syncDescription.textContent = "지금 동기화 버튼 한 번으로 이 기기와 같은 계정의 클라우드를 비교해 업로드, 불러오기 또는 병합을 자동 선택합니다.";
   els.syncLastSync.textContent = detail;
+  els.syncAccountValue.textContent = accountEmail;
+  els.syncLocalCount.textContent = `${localItemCount}개`;
+  els.syncCloudCount.textContent = !signedIn
+    ? "-"
+    : !syncState.cloudChecked
+      ? "확인 전"
+      : syncState.cloudRow
+        ? `${cloudItemCount}개`
+        : "저장본 없음";
+  els.syncDirectionValue.textContent = getSyncActionLabel(signedIn);
+  els.syncLastSyncValue.textContent = formatSyncTime(lastSyncedAt);
   els.syncAuthForm.hidden = !syncState.configured || !syncState.available || signedIn;
   els.syncSignupButton.hidden = !syncConfig.allowSignup;
   els.syncSessionPanel.hidden = !signedIn;
-  els.syncUserEmail.textContent = signedIn ? `로그인: ${syncState.session.user.email || "계정"}` : "";
+  els.syncUserEmail.textContent = signedIn ? accountEmail : "";
+  els.syncNowButton.textContent = syncState.busy ? "동기화 중..." : "지금 동기화";
+  els.syncNowButton.title = "이 기기와 같은 계정의 클라우드를 자동 비교해 동기화합니다.";
   els.syncNowButton.disabled = !canSync() || syncState.busy;
   els.syncLogoutButton.disabled = syncState.busy;
   els.syncLoginButton.disabled = syncState.busy || !syncState.online;
   els.syncSignupButton.disabled = syncState.busy || !syncState.online;
-  els.cloudChoicePanel.hidden = !signedIn || !syncState.needsCloudChoice;
+  els.cloudChoicePanel.hidden = !signedIn;
   els.cloudChoiceText.textContent = getCloudChoiceText(localItemCount, cloudItemCount);
   els.cloudPullButton.disabled = !syncState.cloudRow
     || (localItemCount > 0 && cloudItemCount === 0)
@@ -1668,16 +1916,23 @@ function renderSyncPanel() {
   els.cloudPushButton.disabled = syncState.busy || !syncState.online || localItemCount === 0;
 }
 
+function getSyncActionLabel(signedIn) {
+  if (!syncState.configured) return "이 기기만 저장";
+  if (!signedIn) return "로그인 필요";
+  if (!syncState.online) return "인터넷 연결 필요";
+  if (syncState.busy) return "자동 비교 중";
+  if (syncState.pendingAction === "upload") return "이 기기 → 클라우드";
+  if (syncState.pendingAction === "download") return "클라우드 → 이 기기";
+  if (syncState.pendingAction === "merge") return "양쪽 자동 병합";
+  if (syncState.status === "synced") return "동기화 완료";
+  return "자동 비교";
+}
+
 function getCloudChoiceText(localItemCount, cloudItemCount) {
   if (!syncState.cloudRow) {
-    return "이 계정에는 아직 클라우드 데이터가 없습니다. 목록이 보이는 기기에서 현재 기기 데이터 업로드를 누르세요.";
+    return `현재 이 기기 ${localItemCount}개, 클라우드 저장본 없음. 자동 동기화 대신 방향을 직접 지정할 때만 사용하세요.`;
   }
-
-  if (localItemCount > 0 && cloudItemCount === 0) {
-    return "클라우드 데이터가 비어 있습니다. 현재 로컬 목록을 비우지 않도록 클라우드 불러오기는 막아두었습니다. 목록이 보이는 기기에서 현재 기기 데이터 업로드를 누르세요.";
-  }
-
-  return "이 계정에 클라우드 데이터가 있습니다. 로컬 데이터를 덮어쓰기 전 자동 백업을 만듭니다.";
+  return `현재 이 기기 ${localItemCount}개, 클라우드 ${cloudItemCount}개입니다. 수동 덮어쓰기 전에는 확인하고 로컬 백업을 만듭니다.`;
 }
 
 async function handleSyncLogin(event) {
@@ -1743,6 +1998,9 @@ async function handleSyncLogout() {
     syncState.session = null;
     syncState.status = "local";
     syncState.cloudRow = null;
+    syncState.cloudChecked = false;
+    syncState.pendingAction = "none";
+    syncState.lastResult = "";
     syncState.needsCloudChoice = false;
     showToast("로그아웃했어요.");
   } catch (error) {
@@ -1761,19 +2019,9 @@ async function handleSyncNow() {
 
   setSyncBusy(true);
   try {
-    const row = await fetchCloudState();
-    syncState.cloudRow = row;
-    if (shouldPromptForCloud(row)) {
-      syncState.needsCloudChoice = true;
-      syncState.status = "needs-choice";
-      renderSyncPanel();
-      showToast("클라우드 데이터 처리 방식을 선택하세요.");
-      return;
-    }
-
-    syncState.needsCloudChoice = false;
-    const saved = await upsertCloudState();
-    if (saved) showToast("지금 동기화했어요.");
+    const result = await synchronizeAccountAutomatically();
+    syncState.lastResult = result.message;
+    showToast(result.message);
   } catch (error) {
     setSyncError(error, "지금 동기화하지 못했습니다.");
   } finally {
@@ -1789,10 +2037,15 @@ async function prepareCloudStateChoice() {
   try {
     const row = await fetchCloudState();
     syncState.cloudRow = row;
-    syncState.needsCloudChoice = !row || shouldPromptForCloud(row);
-    syncState.status = syncState.needsCloudChoice ? "needs-choice" : "synced";
-    if (row && !syncState.needsCloudChoice) {
-      markCloudSynced(row.updated_at || syncMeta.lastSyncedAt);
+    syncState.cloudChecked = true;
+    const plan = getAutomaticSyncPlan(row);
+    setPendingSyncPlan(plan);
+    syncState.status = plan.action === "none" ? "synced" : "signed-in";
+    syncState.lastResult = plan.action === "none"
+      ? row ? "이 기기와 클라우드가 같은 상태입니다." : "이 기기와 클라우드에 저장된 항목이 없습니다."
+      : "";
+    if (row && plan.action === "none") {
+      markCloudSynced(row.updated_at || syncMeta.lastSyncedAt, row.data);
       scheduleCloudSave();
     }
   } catch (error) {
@@ -1801,6 +2054,97 @@ async function prepareCloudStateChoice() {
     setSyncBusy(false);
     renderSyncPanel();
   }
+}
+
+function getAutomaticSyncPlan(row) {
+  const localData = serializeStateForCloud();
+  const localItemCount = getStateItemCount(localData);
+  if (!row) {
+    return localItemCount > 0
+      ? { action: "upload", localItemCount, cloudItemCount: 0 }
+      : { action: "none", localItemCount: 0, cloudItemCount: 0 };
+  }
+
+  const cloudData = normalizeExternalState(row.data);
+  const cloudItemCount = getStateItemCount(cloudData);
+  if (areLibraryStatesEqual(localData, cloudData)) {
+    return { action: "none", localItemCount, cloudItemCount };
+  }
+  if (localItemCount === 0 && cloudItemCount > 0) {
+    return { action: "download", localItemCount, cloudItemCount };
+  }
+  if (localItemCount > 0 && cloudItemCount === 0) {
+    return { action: "upload", localItemCount, cloudItemCount };
+  }
+
+  const sameAccount = syncMeta.userId === syncState.session?.user?.id;
+  const baselineFingerprint = sameAccount ? syncMeta.lastSyncedFingerprint : "";
+  if (baselineFingerprint) {
+    const localChanged = fingerprintLibraryState(localData) !== baselineFingerprint;
+    const cloudChanged = fingerprintLibraryState(cloudData) !== baselineFingerprint;
+    if (localChanged && !cloudChanged) {
+      return { action: "upload", localItemCount, cloudItemCount };
+    }
+    if (!localChanged && cloudChanged) {
+      return { action: "download", localItemCount, cloudItemCount };
+    }
+  }
+
+  return { action: "merge", localItemCount, cloudItemCount };
+}
+
+function setPendingSyncPlan(plan) {
+  const action = ["upload", "download", "merge"].includes(plan?.action) ? plan.action : "none";
+  syncState.pendingAction = action;
+  syncState.needsCloudChoice = action !== "none";
+}
+
+async function synchronizeAccountAutomatically() {
+  const row = await fetchCloudState();
+  syncState.cloudRow = row;
+  syncState.cloudChecked = true;
+  const plan = getAutomaticSyncPlan(row);
+  setPendingSyncPlan(plan);
+
+  if (plan.action === "none") {
+    syncState.needsCloudChoice = false;
+    syncState.pendingAction = "none";
+    syncState.status = "synced";
+    if (row) {
+      finishCloudSave(row);
+      return { action: "none", message: "이미 같은 상태입니다." };
+    }
+    return { action: "none", message: "이 기기와 클라우드에 저장된 항목이 없습니다." };
+  }
+
+  if (plan.action === "download") {
+    if (plan.localItemCount > 0) backupLocalState("automatic-cloud-download");
+    applyStateObject(row.data);
+    resetToFirstPage();
+    syncState.needsCloudChoice = false;
+    syncState.pendingAction = "none";
+    syncState.status = "synced";
+    syncState.cloudRow = row;
+    markCloudSynced(row.updated_at || new Date().toISOString(), row.data);
+    persistAndRender(false);
+    return { action: "download", message: `클라우드 ${plan.cloudItemCount}개를 이 기기에 동기화했습니다.` };
+  }
+
+  if (plan.action === "merge") {
+    backupLocalState("automatic-cloud-merge");
+    mergeStateObject(row.data);
+    resetToFirstPage();
+    syncState.needsCloudChoice = false;
+    persistAndRender(false);
+    const saved = await upsertCloudState({ force: true });
+    if (!saved) throw new Error("병합한 목록을 클라우드에 저장하지 못했습니다.");
+    return { action: "merge", message: `양쪽 목록을 병합해 ${state.items.length}개로 동기화했습니다.` };
+  }
+
+  syncState.needsCloudChoice = false;
+  const saved = await upsertCloudState({ force: true });
+  if (!saved) throw new Error("현재 기기 목록을 클라우드에 저장하지 못했습니다.");
+  return { action: "upload", message: `이 기기 ${plan.localItemCount}개를 클라우드에 동기화했습니다.` };
 }
 
 async function fetchCloudState() {
@@ -1821,12 +2165,20 @@ async function pullCloudState() {
   setSyncBusy(true);
   try {
     const row = await fetchCloudState();
+    syncState.cloudRow = row;
+    syncState.cloudChecked = true;
     if (!row) {
+      setPendingSyncPlan(getAutomaticSyncPlan(null));
+      syncState.status = "signed-in";
+      syncState.lastResult = "클라우드 저장본이 없습니다.";
       showToast("불러올 클라우드 데이터가 없어요.");
       return;
     }
 
     if (state.items.length > 0 && getStateItemCount(row.data) === 0) {
+      setPendingSyncPlan(getAutomaticSyncPlan(row));
+      syncState.status = "signed-in";
+      syncState.lastResult = "클라우드가 비어 있어 이 기기 목록을 유지했습니다.";
       showToast("클라우드가 비어 있어 현재 목록을 자동으로 비우지 않았어요. 목록이 있는 기기에서 업로드하세요.");
       return;
     }
@@ -1835,8 +2187,11 @@ async function pullCloudState() {
     applyStateObject(row.data);
     resetToFirstPage();
     syncState.needsCloudChoice = false;
+    syncState.pendingAction = "none";
+    syncState.status = "synced";
     syncState.cloudRow = row;
-    markCloudSynced(row.updated_at || new Date().toISOString());
+    syncState.lastResult = `클라우드 ${getStateItemCount(row.data)}개를 이 기기에 불러왔습니다.`;
+    markCloudSynced(row.updated_at || new Date().toISOString(), row.data);
     persistAndRender(false);
     showToast("클라우드 데이터를 불러왔어요.");
   } catch (error) {
@@ -1858,6 +2213,8 @@ async function pushLocalState() {
   setSyncBusy(true);
   try {
     const row = await fetchCloudState();
+    syncState.cloudRow = row;
+    syncState.cloudChecked = true;
     if (row && getStateItemCount(row.data) > 0 && !areLibraryStatesEqual(row.data, serializeStateForCloud())) {
       const confirmed = window.confirm("클라우드에 다른 기기에서 저장한 변경사항이 있습니다. 현재 기기 목록으로 덮어쓸까요? 취소하면 병합이나 클라우드 불러오기를 선택할 수 있습니다.");
       if (!confirmed) return;
@@ -1865,8 +2222,12 @@ async function pushLocalState() {
     }
 
     syncState.needsCloudChoice = false;
+    syncState.pendingAction = "none";
     const saved = await upsertCloudState({ force: true });
-    if (saved) showToast("현재 기기 데이터를 업로드했어요.");
+    if (saved) {
+      syncState.lastResult = `이 기기 ${state.items.length}개를 클라우드에 업로드했습니다.`;
+      showToast("현재 기기 데이터를 업로드했어요.");
+    }
   } catch (error) {
     setSyncError(error, "현재 기기 데이터를 업로드하지 못했습니다.");
   } finally {
@@ -1881,10 +2242,16 @@ async function mergeCloudState() {
   setSyncBusy(true);
   try {
     const row = await fetchCloudState();
+    syncState.cloudRow = row;
+    syncState.cloudChecked = true;
     if (!row) {
       syncState.needsCloudChoice = false;
+      syncState.pendingAction = "none";
       const saved = await upsertCloudState({ force: true });
-      if (saved) showToast("업로드할 클라우드 데이터를 만들었어요.");
+      if (saved) {
+        syncState.lastResult = `이 기기 ${state.items.length}개로 클라우드 저장본을 만들었습니다.`;
+        showToast("업로드할 클라우드 데이터를 만들었어요.");
+      }
       return;
     }
 
@@ -1892,8 +2259,11 @@ async function mergeCloudState() {
     mergeStateObject(row.data);
     resetToFirstPage();
     syncState.needsCloudChoice = false;
+    syncState.pendingAction = "none";
     persistAndRender(false);
-    await upsertCloudState({ force: true });
+    const saved = await upsertCloudState({ force: true });
+    if (!saved) throw new Error("병합한 목록을 클라우드에 저장하지 못했습니다.");
+    syncState.lastResult = `양쪽 목록을 병합해 ${state.items.length}개로 동기화했습니다.`;
     showToast("가능한 항목을 병합하고 동기화했어요.");
   } catch (error) {
     setSyncError(error, "클라우드 데이터와 병합하지 못했습니다.");
@@ -2010,18 +2380,22 @@ function finishCloudSave(row) {
     data: row.data,
     updated_at: row.updated_at
   };
+  syncState.cloudChecked = true;
+  syncState.pendingAction = "none";
   syncState.needsCloudChoice = false;
-  markCloudSynced(row.updated_at);
+  markCloudSynced(row.updated_at, row.data);
   renderSyncPanel();
 }
 
 function requireCloudChoice(row) {
   syncState.cloudRow = row || null;
-  syncState.needsCloudChoice = true;
-  syncState.status = "needs-choice";
+  syncState.cloudChecked = true;
+  setPendingSyncPlan(getAutomaticSyncPlan(row));
+  syncState.status = "signed-in";
   syncState.errorMessage = "";
+  syncState.lastResult = "";
   renderSyncPanel();
-  showToast("다른 기기에서 저장한 변경사항을 발견했어요. 불러오기, 업로드 또는 병합을 선택하세요.");
+  showToast("다른 기기의 변경사항을 발견했어요. 지금 동기화를 누르면 자동으로 맞춥니다.");
 }
 
 function shouldPromptForCloud(row) {
@@ -2246,6 +2620,7 @@ function downloadJsonFile(payload, fileName) {
 
 function openCategoryManageDialog() {
   ensureLibraryShape();
+  els.categoryNewNameInput.value = "";
   updateCategorySortUI();
   renderCategoryManageList();
   openDialog(els.categoryManageDialog);
@@ -3522,7 +3897,7 @@ function showToast(message) {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (refreshingForServiceWorker) return;
+    if (!serviceWorkerUpdateRequested || refreshingForServiceWorker) return;
     refreshingForServiceWorker = true;
     window.location.reload();
   });
@@ -3561,5 +3936,6 @@ function applyWaitingServiceWorker() {
   }
 
   els.updateBanner.hidden = true;
+  serviceWorkerUpdateRequested = true;
   waitingServiceWorker.postMessage({ type: "SKIP_WAITING" });
 }
