@@ -1,5 +1,5 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.07.12.2";
+const APP_VERSION = "2026.07.12.3";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
@@ -304,6 +304,9 @@ function init() {
 function configureHeaderMenu() {
   if (!els.headerMenu || typeof window.matchMedia !== "function") return;
   const media = window.matchMedia("(max-width: 640px)");
+  const closeMobileMenu = () => {
+    if (media.matches) els.headerMenu.removeAttribute("open");
+  };
   const syncMenuState = (query) => {
     if (query.matches) {
       els.headerMenu.removeAttribute("open");
@@ -317,6 +320,17 @@ function configureHeaderMenu() {
   } else if (typeof media.addListener === "function") {
     media.addListener(syncMenuState);
   }
+
+  els.headerMenu.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest(".header-menu__panel a, .header-menu__panel button")) {
+      closeMobileMenu();
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (!media.matches || !els.headerMenu.open || els.headerMenu.contains(event.target)) return;
+    closeMobileMenu();
+  });
 }
 
 function bindEvents() {
