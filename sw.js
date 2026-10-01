@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "gaegol-tube-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}v22`;
+const CACHE_NAME = `${CACHE_PREFIX}v23`;
 const SHELL_FILES = [
   "./",
   "./index.html",

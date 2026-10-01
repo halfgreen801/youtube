@@ -1,5 +1,5 @@
 const APP_NAME = "개골튜브";
-const APP_VERSION = "2026.07.12.3";
+const APP_VERSION = "2026.10.02.1";
 const STORAGE_KEY = "tube-vault-state-v1";
 const THEME_STORAGE_KEY = "gaegol-tube-theme-v1";
 const PAGE_SIZE_STORAGE_KEY = "gaegol-tube-page-size-v1";
@@ -15,6 +15,9 @@ const CATEGORY_SORT_MODES = ["custom", "name", "created"];
 const SYNC_META_KEY = "tubeVaultSyncMeta";
 const CLOUD_BACKUP_PREFIX = "tubeVaultBackupBeforeCloudPull:";
 const CATEGORY_DELETE_BACKUP_PREFIX = "gaegolTubeBeforeCategoryDelete:";
+const MAX_LOCAL_BACKUPS = 3;
+const MAX_LOCAL_BACKUP_BYTES = 1024 * 1024;
+let latestLocalBackupKey = "";
 const SUPABASE_TABLE = "tube_vault_states";
 const SUPABASE_CLIENT_SCRIPT = "./vendor/supabase-js.min.js";
 const SUPABASE_CLIENT_VERSION = "2.108.2";
@@ -289,6 +292,12 @@ const els = {
 init();
 
 function init() {
+  // Reclaim legacy snapshots before Supabase writes its session to this origin.
+  try {
+    pruneLocalBackups();
+  } catch (error) {
+    console.warn("자동 백업 정리를 완료하지 못했습니다.", error);
+  }
   ensureLibraryShape();
   ensureCategoryOptions();
   bindEvents();
@@ -1328,7 +1337,7 @@ function loadPageSize() {
 
 function savePageSize(size) {
   const normalized = PAGE_SIZE_OPTIONS.includes(size) ? size : DEFAULT_PAGE_SIZE;
-  localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(normalized));
+  writeLocalStorageSafely(PAGE_SIZE_STORAGE_KEY, String(normalized));
 }
 
 function loadCategorySortMode() {
@@ -1340,7 +1349,7 @@ function loadCategorySortMode() {
 }
 
 function saveCategorySortMode(mode) {
-  localStorage.setItem(CATEGORY_SORT_STORAGE_KEY, normalizeCategorySortMode(mode));
+  writeLocalStorageSafely(CATEGORY_SORT_STORAGE_KEY, normalizeCategorySortMode(mode));
 }
 
 function normalizeCategorySortMode(mode) {
@@ -1651,7 +1660,7 @@ function loadTheme() {
 
 function saveTheme(theme) {
   const normalized = normalizeTheme(theme);
-  localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(normalized));
+  writeLocalStorageSafely(THEME_STORAGE_KEY, JSON.stringify(normalized));
 }
 
 function applyTheme(theme) {
@@ -2123,11 +2132,11 @@ async function synchronizeAccountAutomatically() {
   if (plan.action === "none") {
     syncState.needsCloudChoice = false;
     syncState.pendingAction = "none";
-    syncState.status = "synced";
     if (row) {
       finishCloudSave(row);
       return { action: "none", message: "이미 같은 상태입니다." };
     }
+    syncState.status = "synced";
     return { action: "none", message: "이 기기와 클라우드에 저장된 항목이 없습니다." };
   }
 
@@ -2135,12 +2144,14 @@ async function synchronizeAccountAutomatically() {
     if (plan.localItemCount > 0) backupLocalState("automatic-cloud-download");
     applyStateObject(row.data);
     resetToFirstPage();
+    if (!persistAndRender(false, { scheduleCloud: false })) {
+      throw createStorageQuotaError();
+    }
+    markCloudSynced(row.updated_at || new Date().toISOString(), row.data);
     syncState.needsCloudChoice = false;
     syncState.pendingAction = "none";
     syncState.status = "synced";
     syncState.cloudRow = row;
-    markCloudSynced(row.updated_at || new Date().toISOString(), row.data);
-    persistAndRender(false);
     return { action: "download", message: `클라우드 ${plan.cloudItemCount}개를 이 기기에 동기화했습니다.` };
   }
 
@@ -2148,8 +2159,10 @@ async function synchronizeAccountAutomatically() {
     backupLocalState("automatic-cloud-merge");
     mergeStateObject(row.data);
     resetToFirstPage();
+    if (!persistAndRender(false, { scheduleCloud: false })) {
+      throw createStorageQuotaError();
+    }
     syncState.needsCloudChoice = false;
-    persistAndRender(false);
     const saved = await upsertCloudState({ force: true });
     if (!saved) throw new Error("병합한 목록을 클라우드에 저장하지 못했습니다.");
     return { action: "merge", message: `양쪽 목록을 병합해 ${state.items.length}개로 동기화했습니다.` };
@@ -2200,13 +2213,15 @@ async function pullCloudState() {
     backupLocalState("cloud-pull");
     applyStateObject(row.data);
     resetToFirstPage();
+    if (!persistAndRender(false, { scheduleCloud: false })) {
+      throw createStorageQuotaError();
+    }
+    markCloudSynced(row.updated_at || new Date().toISOString(), row.data);
     syncState.needsCloudChoice = false;
     syncState.pendingAction = "none";
     syncState.status = "synced";
     syncState.cloudRow = row;
     syncState.lastResult = `클라우드 ${getStateItemCount(row.data)}개를 이 기기에 불러왔습니다.`;
-    markCloudSynced(row.updated_at || new Date().toISOString(), row.data);
-    persistAndRender(false);
     showToast("클라우드 데이터를 불러왔어요.");
   } catch (error) {
     setSyncError(error, "클라우드 데이터를 불러오지 못했습니다.");
@@ -2272,9 +2287,11 @@ async function mergeCloudState() {
     backupLocalState("cloud-merge");
     mergeStateObject(row.data);
     resetToFirstPage();
+    if (!persistAndRender(false, { scheduleCloud: false })) {
+      throw createStorageQuotaError();
+    }
     syncState.needsCloudChoice = false;
     syncState.pendingAction = "none";
-    persistAndRender(false);
     const saved = await upsertCloudState({ force: true });
     if (!saved) throw new Error("병합한 목록을 클라우드에 저장하지 못했습니다.");
     syncState.lastResult = `양쪽 목록을 병합해 ${state.items.length}개로 동기화했습니다.`;
@@ -2388,6 +2405,7 @@ async function performCloudUpsert({ silent = false, force = false } = {}) {
 }
 
 function finishCloudSave(row) {
+  markCloudSynced(row.updated_at, row.data);
   syncState.status = "synced";
   syncState.errorMessage = "";
   syncState.cloudRow = {
@@ -2397,7 +2415,6 @@ function finishCloudSave(row) {
   syncState.cloudChecked = true;
   syncState.pendingAction = "none";
   syncState.needsCloudChoice = false;
-  markCloudSynced(row.updated_at, row.data);
   renderSyncPanel();
 }
 
@@ -2440,9 +2457,13 @@ function setSyncBusy(value) {
 
 function setSyncError(error, fallback) {
   syncState.status = "error";
-  syncState.errorMessage = error?.message || fallback;
+  syncState.errorMessage = isQuotaExceededError(error)
+    ? "웹앱 저장공간이 부족해 동기화를 완료하지 못했습니다. 현재 목록을 내보내기로 백업하세요."
+    : error?.message || fallback;
   renderSyncPanel();
-  showToast("동기화 실패. 로컬 저장은 유지되었습니다.");
+  showToast(isQuotaExceededError(error)
+    ? "저장공간이 부족해 동기화를 중단했어요. 현재 목록을 내보내기로 백업하세요."
+    : "동기화 실패. 현재 목록과 클라우드 상태를 확인하세요.");
 }
 
 function getStateItemCount(value) {
@@ -2558,11 +2579,91 @@ function backupLocalState(reason) {
 
 function backupStateObject(snapshot, reason) {
   const backedUpAt = new Date().toISOString();
-  localStorage.setItem(`${CLOUD_BACKUP_PREFIX}${backedUpAt}`, JSON.stringify({
+  writeLocalBackup(CLOUD_BACKUP_PREFIX, backedUpAt, {
     reason,
     backedUpAt,
     state: normalizeExternalState(snapshot)
-  }));
+  });
+}
+
+function isQuotaExceededError(error) {
+  return error?.name === "QuotaExceededError"
+    || error?.name === "NS_ERROR_DOM_QUOTA_REACHED"
+    || error?.code === 22
+    || error?.code === 1014;
+}
+
+function createStorageQuotaError() {
+  const error = new Error("웹앱 저장공간이 부족합니다. 현재 목록을 내보내기로 백업하세요.");
+  error.name = "QuotaExceededError";
+  return error;
+}
+
+function getLocalBackupEntries() {
+  const entries = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    const prefix = [CLOUD_BACKUP_PREFIX, CATEGORY_DELETE_BACKUP_PREFIX]
+      .find((candidate) => key?.startsWith(candidate));
+    if (!prefix) continue;
+    const value = localStorage.getItem(key) || "";
+    const timestamp = Date.parse(key.slice(prefix.length, prefix.length + 24)) || 0;
+    // localStorage stores UTF-16 strings; this is a conservative size estimate.
+    entries.push({ key, bytes: 2 * (key.length + value.length), timestamp });
+  }
+  return entries.sort((left, right) => {
+    if (left.key === latestLocalBackupKey) return 1;
+    if (right.key === latestLocalBackupKey) return -1;
+    return left.timestamp - right.timestamp || left.key.localeCompare(right.key);
+  });
+}
+
+function pruneLocalBackups() {
+  const entries = getLocalBackupEntries();
+  let bytes = entries.reduce((total, entry) => total + entry.bytes, 0);
+  // Always keep the newest recovery snapshot, including a single large one.
+  while (entries.length > 1
+    && (entries.length > MAX_LOCAL_BACKUPS || bytes > MAX_LOCAL_BACKUP_BYTES)) {
+    const oldest = entries.shift();
+    localStorage.removeItem(oldest.key);
+    bytes -= oldest.bytes;
+  }
+}
+
+function writeLocalStorageSafely(key, value, { preserveLatestBackup = true } = {}) {
+  try {
+    localStorage.setItem(key, value);
+    return;
+  } catch (error) {
+    if (!isQuotaExceededError(error)) throw error;
+  }
+
+  const backups = getLocalBackupEntries();
+  if (preserveLatestBackup) backups.pop();
+  for (const backup of backups) {
+    if (backup.key === key) continue;
+    localStorage.removeItem(backup.key);
+    try {
+      localStorage.setItem(key, value);
+      return;
+    } catch (error) {
+      if (!isQuotaExceededError(error)) throw error;
+    }
+  }
+  throw createStorageQuotaError();
+}
+
+function writeLocalBackup(prefix, timestamp, payload) {
+  let key = `${prefix}${timestamp}`;
+  let suffix = 0;
+  while (localStorage.getItem(key) !== null) {
+    suffix += 1;
+    key = `${prefix}${timestamp}:${String(suffix).padStart(6, "0")}`;
+  }
+  // The primary library is still intact while the replacement snapshot is written.
+  writeLocalStorageSafely(key, JSON.stringify(payload), { preserveLatestBackup: false });
+  latestLocalBackupKey = key;
+  pruneLocalBackups();
 }
 
 function loadSyncMeta() {
@@ -2579,18 +2680,19 @@ function loadSyncMeta() {
   }
 }
 
-function saveSyncMeta() {
-  localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta));
+function saveSyncMeta(meta = syncMeta) {
+  writeLocalStorageSafely(SYNC_META_KEY, JSON.stringify(meta));
 }
 
 function markCloudSynced(lastSyncedAt, cloudData = syncState.cloudRow?.data) {
   if (!syncState.session?.user?.id || !lastSyncedAt) return;
-  syncMeta = {
+  const nextMeta = {
     userId: syncState.session.user.id,
     lastSyncedAt,
     lastSyncedFingerprint: fingerprintLibraryState(cloudData || serializeStateForCloud())
   };
-  saveSyncMeta();
+  saveSyncMeta(nextMeta);
+  syncMeta = nextMeta;
 }
 
 function formatSyncTime(value) {
@@ -2901,13 +3003,21 @@ function cloneStateForBackup() {
 function createLocalBackupBeforeCategoryDelete(categoryId) {
   const category = getCategory(categoryId);
   const createdAt = new Date().toISOString();
-  localStorage.setItem(`${CATEGORY_DELETE_BACKUP_PREFIX}${createdAt}`, JSON.stringify({
-    reason: "category-delete",
-    categoryId,
-    categoryName: category?.name || "",
-    createdAt,
-    state: cloneStateForBackup()
-  }));
+  try {
+    writeLocalBackup(CATEGORY_DELETE_BACKUP_PREFIX, createdAt, {
+      reason: "category-delete",
+      categoryId,
+      categoryName: category?.name || "",
+      createdAt,
+      state: cloneStateForBackup()
+    });
+    return true;
+  } catch (error) {
+    showToast(isQuotaExceededError(error)
+      ? "삭제 전 백업을 저장할 공간이 부족해 중단했어요. 먼저 내보내기로 백업하세요."
+      : "삭제 전 백업을 저장하지 못해 중단했어요. 먼저 내보내기로 백업하세요.");
+    return false;
+  }
 }
 
 function openDeleteCategoryDialog(categoryId) {
@@ -3019,11 +3129,11 @@ function confirmDeleteCategory() {
   const mode = els.deleteModeDeleteItems.checked ? "delete-items" : "move";
 
   if (itemCount === 0) {
-    createLocalBackupBeforeCategoryDelete(categoryId);
+    if (!createLocalBackupBeforeCategoryDelete(categoryId)) return;
     removeCategoryById(categoryId);
     repairCategoryReferencesAfterDelete(categoryId);
     closeDeleteCategoryDialog();
-    persistAndRender();
+    if (!persistAndRender()) return;
     renderCategoryManageList();
     showToast("카테고리를 삭제했어요.");
     return;
@@ -3037,7 +3147,7 @@ function confirmDeleteCategory() {
       return;
     }
 
-    createLocalBackupBeforeCategoryDelete(categoryId);
+    if (!createLocalBackupBeforeCategoryDelete(categoryId)) return;
     items.forEach((item) => {
       const slot = item.slot || DEFAULT_SLOT;
       ensureCategorySlot(targetCategoryId, slot);
@@ -3048,7 +3158,7 @@ function confirmDeleteCategory() {
     removeCategoryById(categoryId);
     repairCategoryReferencesAfterDelete(categoryId, targetCategoryId);
     closeDeleteCategoryDialog();
-    persistAndRender();
+    if (!persistAndRender()) return;
     renderCategoryManageList();
     showToast(`카테고리를 삭제하고 ${itemCount}개 항목을 이동했어요.`);
     return;
@@ -3062,12 +3172,12 @@ function confirmDeleteCategory() {
   const ok = window.confirm(`정말 ${category.name} 카테고리와 ${itemCount}개 항목을 모두 삭제할까요? 삭제 전 백업은 만들었지만 화면에서는 제거됩니다.`);
   if (!ok) return;
 
-  createLocalBackupBeforeCategoryDelete(categoryId);
+  if (!createLocalBackupBeforeCategoryDelete(categoryId)) return;
   state.items = state.items.filter((item) => item.categoryId !== categoryId);
   removeCategoryById(categoryId);
   repairCategoryReferencesAfterDelete(categoryId);
   closeDeleteCategoryDialog();
-  persistAndRender(true, { allowEmptyOverwrite: true });
+  if (!persistAndRender(true, { allowEmptyOverwrite: true })) return;
   renderCategoryManageList();
   showToast(`카테고리와 ${itemCount}개 항목을 삭제했어요.`);
 }
@@ -3854,21 +3964,22 @@ function persistAndRender(show = true, options = {}) {
   }
   render();
   if (show) requestAnimationFrame(() => {});
+  return saved;
 }
 
-function persist({ allowEmptyOverwrite = false } = {}) {
+function persist({ allowEmptyOverwrite = false, scheduleCloud = true } = {}) {
   state.version = IMPORT_VERSION;
   if (!allowEmptyOverwrite && shouldBlockEmptyOverwrite()) {
     showToast("기존 목록을 빈 목록으로 덮어쓰지 않도록 저장을 중단했어요. 데이터 이전에서 백업을 확인하세요.");
     return false;
   }
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    writeLocalStorageSafely(STORAGE_KEY, JSON.stringify(state));
   } catch {
     showToast("브라우저 저장공간이 부족해 저장하지 못했어요. 먼저 내보내기로 백업한 뒤 불필요한 항목을 정리하세요.");
     return false;
   }
-  scheduleCloudSave();
+  if (scheduleCloud) scheduleCloudSave();
   return true;
 }
 
